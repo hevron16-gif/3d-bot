@@ -1,0 +1,365 @@
+﻿import requests
+import json
+import time
+import os
+import threading
+import base64
+from datetime import date
+from flask import Flask
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, CallbackQuery, LabeledPrice, PreCheckoutQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.default import DefaultBotProperties
+
+
+# ========== ТОКЕНЫ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ НА RENDER ==========
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+MESHY_API_KEY = os.environ.get("MESHY_API_KEY")
+# =================================================================
+
+
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN не задан!")
+if not MESHY_API_KEY:
+    raise ValueError("❌ MESHY_API_KEY не задан!")
+
+
+# ========== НАСТРОЙКИ ==========
+MESHY_API_URL = "https://api.meshy.ai/openapi/v2"
+app = Flask(__name__)
+
+
+# Инициализация бота и диспетчера
+bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp = Dispatcher()
+
+
+user_data = {}
+USAGE_FILE = "user_usage.json"
+
+
+print("🟢 Бот запускается...")
+
+
+# ========== КЛАВИАТУРЫ ==========
+def main_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎲 Генерация по тексту", callback_data="gen_text")
+    builder.button(text="🎨 Генерация по фото", callback_data="gen_photo")
+    builder.button(text="📦 Мои модели", callback_data="my_models")
+    builder.button(text="💎 Подписка", callback_data="profile")
+    builder.adjust(2, 1, 1)
+    return builder.as_markup()
+
+
+def sub_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💎 Купить Premium (299⭐)", callback_data="buy_premium")
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def result_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🖨️ Отправить на печать", callback_data="print_model")
+    builder.button(text="🎨 Ещё модель", callback_data="gen_text")
+    builder.button(text="🔙 В меню", callback_data="back_to_menu")
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+# ========== РАБОТА С БАЗОЙ (упрощённо) ==========
+def load_user_usage():
+    if os.path.exists(USAGE_FILE):
+        try:
+            with open(USAGE_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
+def save_user_usage(usage):
+    try:
+        with open(USAGE_FILE, 'w') as f:
+            json.dump(usage, f)
+    except:
+        pass
+
+
+def get_user(user_id):
+    usage = load_user_usage()
+    user_key = str(user_id)
+    today_str = date.today().isoformat()
+    if user_key not in usage:
+        return "free", 3
+    if usage[user_key].get("expires", "") >= today_str:
+        return "premium", float('inf')
+    return "free", max(0, 3 - usage[user_key].get("count", 0))
+
+
+def decrease_limit(user_id):
+    usage = load_user_usage()
+    user_key = str(user_id)
+    today_str = date.today().isoformat()
+    if user_key not in usage:
+        usage[user_key] = {"date": today_str, "count": 1}
+    else:
+        usage[user_key]["count"] = usage[user_key].get("count", 0) + 1
+    save_user_usage(usage)
+
+
+def set_premium(user_id, days=30):
+    usage = load_user_usage()
+    user_key = str(user_id)
+    from datetime import timedelta
+    expires = (date.today() + timedelta(days=days)).isoformat()
+    usage[user_key] = {"expires": expires}
+    save_user_usage(usage)
+
+
+# ========== ГЕНЕРАЦИЯ 3D ==========
+def generate_meshy_3d(prompt, is_text=True, image_data=None):
+    """Создаёт задачу в Meshy и возвращает bytes готовой модели"""
+    headers = {
+        "Authorization": f"Bearer {MESHY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    if is_text:
+        payload = {
+            "mode": "async",  # лучше использовать асинхронный режим
+            "prompt": prompt,
+            "art_style": "realistic",
+            "should_remesh": True
+        }
+        response = requests.post(f"{MESHY_API_URL}/text-to-3d", headers=headers, json=payload, timeout=30)
+    else:
+        # Отправляем фото как base64 (решает проблемы с доступом)
+        payload = {
+            "image_base64": image_data,
+            "should_remesh": True
+        }
+        response = requests.post(f"{MESHY_API_URL}/image-to-3d", headers=headers, json=payload, timeout=30)
+    
+    if response.status_code not in (200, 202):
+        raise Exception(f"API error: {response.status_code} - {response.text}")
+    
+    task_data = response.json()
+    task_id = task_data.get("result")
+    if not task_id:
+        raise Exception("No task_id in response")
+    
+    # Ожидание завершения
+    max_wait = 180
+    start_time = time.time()
+    endpoint = f"{MESHY_API_URL}/text-to-3d/{task_id}" if is_text else f"{MESHY_API_URL}/image-to-3d/{task_id}"
+    
+    while time.time() - start_time < max_wait:
+        time.sleep(5)
+        status_response = requests.get(endpoint, headers=headers, timeout=30)
+        if status_response.status_code == 200:
+            status_data = status_response.json()
+            status = status_data.get("status", "")
+            if status == "SUCCEEDED":
+                model_urls = status_data.get("model_urls", {})
+                model_url = model_urls.get("glb")
+                if model_url:
+                    model_content = requests.get(model_url, timeout=60)
+                    if model_content.status_code == 200:
+                        return model_content.content
+                    else:
+                        raise Exception("Failed to download model")
+                else:
+                    raise Exception("No model URL")
+            elif status == "FAILED":
+                raise Exception("Generation failed")
+        else:
+            print(f"Status check error: {status_response.status_code}")
+    
+    raise Exception("Timeout waiting for generation")
+
+
+# ========== ОБРАБОТЧИКИ ==========
+class Form(StatesGroup):
+    waiting_text_prompt = State()
+    waiting_photo = State()
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "👋 Привет! Я бот для генерации 3D моделей.\n\n"
+        "🎁 Бесплатно: 3 модели в день\n"
+        "💎 Премиум: безлимит за 299⭐/мес\n\n"
+        "Выбери действие:",
+        reply_markup=main_menu()
+    )
+
+
+@dp.callback_query(lambda c: c.data == "back_to_menu")
+async def back_to_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "👋 Привет! Я бот для генерации 3D моделей.\n\n"
+        "🎁 Бесплатно: 3 модели в день\n"
+        "💎 Премиум: безлимит за 299⭐/мес\n\n"
+        "Выбери действие:",
+        reply_markup=main_menu()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "profile")
+async def show_profile(callback: CallbackQuery):
+    sub_tier, gens_left = get_user(callback.from_user.id)
+    text = (f"👤 Твой профиль:\n"
+            f"Текущий план: {sub_tier.upper()}\n"
+            f"Осталось генераций: {gens_left if sub_tier != 'premium' else 'Безлимит'}\n\n"
+            f"Закончились лимиты или хочешь модели без ограничений? Выбери подписку:")
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=sub_menu())
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "my_models")
+async def my_models(callback: CallbackQuery):
+    await callback.message.answer("📦 История моделей появится в следующей версии. Пока сохраняй файлы в Telegram.")
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "gen_text")
+async def ask_for_text_prompt(callback: CallbackQuery, state: FSMContext):
+    sub_tier, gens_left = get_user(callback.from_user.id)
+    if sub_tier != 'premium' and gens_left <= 0:
+        await callback.message.answer(
+            "Упс! На сегодня бесплатные генерации закончились 😔\n"
+            "Оформи подписку, чтобы получить лучшее качество и снять лимиты!",
+            reply_markup=sub_menu()
+        )
+        await callback.answer()
+        return
+    await state.set_state(Form.waiting_text_prompt)
+    await callback.message.answer("🎲 Жду описание (например: 'готический замок' или 'статуэтка дракона на скале')!")
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "gen_photo")
+async def ask_for_photo(callback: CallbackQuery, state: FSMContext):
+    sub_tier, gens_left = get_user(callback.from_user.id)
+    if sub_tier != 'premium' and gens_left <= 0:
+        await callback.message.answer(
+            "Упс! На сегодня бесплатные генерации закончились 😔\n"
+            "Оформи подписку, чтобы получить лучшее качество и снять лимиты!",
+            reply_markup=sub_menu()
+        )
+        await callback.answer()
+        return
+    await state.set_state(Form.waiting_photo)
+    await callback.message.answer("📸 Отправь фотографию объекта (JPG или PNG). Я сделаю 3D-модель!")
+    await callback.answer()
+
+
+@dp.message(Form.waiting_text_prompt)
+async def generate_from_text(message: Message, state: FSMContext):
+    await state.clear()
+    sub_tier, gens_left = get_user(message.from_user.id)
+    if sub_tier != 'premium' and gens_left <= 0:
+        await message.answer("❌ Лимит исчерпан. Загляни в /start -> Профиль.")
+        return
+    
+    await message.answer("⏳ Магия начинается... Генерирую 3D-модель через Meshy AI. Это займёт 1-2 минуты.", parse_mode="HTML")
+    
+    try:
+        model_data = generate_meshy_3d(message.text, is_text=True)
+        if sub_tier != 'premium':
+            decrease_limit(message.from_user.id)
+        await message.answer_document(
+            types.BufferedInputFile(model_data, filename="model.glb"),
+            caption="✅ Вот твоя 3D-модель!",
+            reply_markup=result_menu()
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка генерации: {str(e)}")
+
+
+@dp.message(Form.waiting_photo)
+async def generate_from_photo(message: Message, state: FSMContext):
+    await state.clear()
+    sub_tier, gens_left = get_user(message.from_user.id)
+    if sub_tier != 'premium' and gens_left <= 0:
+        await message.answer("❌ Лимит исчерпан. Загляни в /start -> Профиль.")
+        return
+    
+    if not message.photo:
+        await message.answer("❌ Пожалуйста, отправь фотографию (JPG или PNG).")
+        return
+    
+    await message.answer("⏳ Обрабатываю фото... Это займёт 1-2 минуты.", parse_mode="HTML")
+    
+    try:
+        # Скачиваем фото из Telegram
+        file_id = message.photo[-1].file_id
+        file = await bot.get_file(file_id)
+        file_data = await bot.download_file(file.file_path)
+        
+        # Кодируем в base64
+        encoded_image = base64.b64encode(file_data.read()).decode('utf-8')
+        
+        # Генерируем модель
+        model_data = generate_meshy_3d("", is_text=False, image_data=encoded_image)
+        
+        if sub_tier != 'premium':
+            decrease_limit(message.from_user.id)
+        
+        await message.answer_document(
+            types.BufferedInputFile(model_data, filename="model.glb"),
+            caption="✅ Вот твоя 3D-модель по фото!",
+            reply_markup=result_menu()
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка генерации: {str(e)}")
+
+
+@dp.callback_query(lambda c: c.data == "buy_premium")
+async def buy_premium(callback: CallbackQuery):
+    await callback.message.answer(
+        "💎 Премиум подписка — 299 Telegram Stars\n\n"
+        "Безлимит на месяц, улучшенное качество, приоритетная обработка.\n"
+        "Нажми кнопку ниже, чтобы оплатить.",
+        reply_markup=result_menu()
+    )
+    await callback.answer()
+
+
+@dp.pre_checkout_query()
+async def pre_checkout(pre_checkout: PreCheckoutQuery):
+    await pre_checkout.answer(ok=True)
+
+
+@dp.message(lambda m: m.successful_payment)
+async def successful_payment(message: Message):
+    set_premium(message.from_user.id, days=30)
+    await message.answer("✅ Подписка активирована! Спасибо за покупку 😊\nТеперь у тебя безлимит на месяц.")
+
+
+async def main():
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    # Запускаем aiogram в отдельном потоке
+    def run_aiogram():
+        import asyncio
+        asyncio.run(main())
+    
+    bot_thread = threading.Thread(target=run_aiogram, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем Flask для healthcheck
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
