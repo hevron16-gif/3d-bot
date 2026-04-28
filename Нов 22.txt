@@ -1,0 +1,307 @@
+﻿import requests
+import json
+import time
+import os
+import base64
+from datetime import date, timedelta
+from flask import Flask
+
+
+# ========== ТОКЕНЫ ==========
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+MESHY_API_KEY = os.environ.get("MESHY_API_KEY")
+
+
+if not TELEGRAM_BOT_TOKEN or not MESHY_API_KEY:
+    raise ValueError("TELEGRAM_BOT_TOKEN и MESHY_API_KEY должны быть заданы!")
+
+
+app = Flask(__name__)
+
+
+API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+USAGE_FILE = "user_usage.json"
+user_states = {}
+
+
+print("🟢 Бот запускается...")
+
+
+# ========== ЛИМИТЫ ==========
+def load_usage():
+    if os.path.exists(USAGE_FILE):
+        try:
+            with open(USAGE_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
+def save_usage(usage):
+    try:
+        with open(USAGE_FILE, 'w') as f:
+            json.dump(usage, f)
+    except:
+        pass
+
+
+def get_user(user_id):
+    usage = load_usage()
+    uid = str(user_id)
+    today = date.today().isoformat()
+    if uid not in usage:
+        return "free", 3
+    if usage[uid].get("premium_until", "") >= today:
+        return "premium", float('inf')
+    if usage[uid].get("date") == today:
+        return "free", max(0, 3 - usage[uid].get("count", 0))
+    return "free", 3
+
+
+def decrement_limit(user_id):
+    usage = load_usage()
+    uid = str(user_id)
+    today = date.today().isoformat()
+    if uid not in usage or usage[uid].get("date") != today:
+        usage[uid] = {"date": today, "count": 1}
+    else:
+        usage[uid]["count"] = usage[uid].get("count", 0) + 1
+    save_usage(usage)
+
+
+# ========== ОТПРАВКА ==========
+def send_message(chat_id, text, keyboard=None):
+    url = API_URL + "/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        payload["reply_markup"] = json.dumps(keyboard)
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except:
+        pass
+
+
+def send_document(chat_id, file_bytes, filename, caption=""):
+    url = API_URL + "/sendDocument"
+    files = {"document": (filename, file_bytes)}
+    data = {"chat_id": chat_id, "caption": caption}
+    try:
+        requests.post(url, files=files, data=data, timeout=120)
+    except Exception as e:
+        print(f"Ошибка отправки документа: {e}")
+
+
+# ========== КЛАВИАТУРЫ ==========
+def main_keyboard():
+    return {"inline_keyboard": [
+        [{"text": "🎲 Генерация по тексту", "callback_data": "gen_text"}],
+        [{"text": "🎨 Генерация по фото", "callback_data": "gen_photo"}],
+        [{"text": "💎 Купить Premium (199 ⭐)", "callback_data": "buy_premium"}]
+    ]}
+
+
+# ========== ГЕНЕРАЦИЯ 3D (исправленные эндпоинты) ==========
+def generate_3d_model(prompt=None, image_base64=None, image_caption=None):
+    headers = {
+        "Authorization": f"Bearer {MESHY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+
+    if image_base64:
+        print("[IMAGE-TO-3D] Запуск генерации по фото")
+        # Жёстко прописываем актуальный путь
+        endpoint = "https://api.meshy.ai/openapi/v1/image-to-3d"
+        
+        data_uri = f"data:image/jpeg;base64,{image_base64}"
+        
+        payload = {
+            "image_url": data_uri,
+            "should_remesh": True,
+            "should_texture": True,
+            "enable_pbr": False,
+            "ai_model": "meshy-6"
+        }
+        if image_caption and image_caption.strip():
+            payload["texture_prompt"] = image_caption.strip()
+            
+    else:
+        print(f"[TEXT-TO-3D] Запуск генерации по тексту: {prompt[:80]}...")
+        endpoint = "https://api.meshy.ai/openapi/v1/text-to-3d"
+        
+        payload = {
+            "mode": "preview",
+            "prompt": prompt,
+            "art_style": "realistic",
+            "should_remesh": True,
+            "should_texture": True
+        }
+
+
+    print(f"[DEBUG] Отправка запроса на: {endpoint}")
+    
+    response = requests.post(endpoint, headers=headers, json=payload, timeout=50)
+    print(f"[DEBUG] Ответ Meshy: статус {response.status_code}")
+
+
+    if response.status_code not in (200, 202):
+        raise Exception(f"Meshy ошибка {response.status_code}: {response.text[:400]}")
+
+
+    data = response.json()
+    task_id = data.get("result") or data.get("task_id")
+    if not task_id:
+        raise Exception("Не удалось получить task_id от Meshy")
+
+
+    print(f"[DEBUG] Задача создана, ID: {task_id}")
+
+
+    # Polling
+    start_time = time.time()
+    status_endpoint = f"{endpoint}/{task_id}"
+
+
+    while time.time() - start_time < 420:  # максимум 7 минут
+        time.sleep(10)
+        status_resp = requests.get(status_endpoint, headers=headers, timeout=40)
+        
+        if status_resp.status_code == 200:
+            sdata = status_resp.json()
+            status = sdata.get("status")
+            print(f"[DEBUG] Статус задачи: {status}")
+            
+            if status == "SUCCEEDED":
+                model_urls = sdata.get("model_urls") or sdata.get("result", {})
+                model_url = model_urls.get("glb")
+                if model_url:
+                    print("[DEBUG] Скачиваем модель...")
+                    model_resp = requests.get(model_url, timeout=120)
+                    if model_resp.status_code == 200:
+                        print("[DEBUG] Модель успешно получена!")
+                        return model_resp.content
+                    else:
+                        raise Exception("Не удалось скачать модель")
+            elif status == "FAILED":
+                raise Exception("Генерация не удалась (FAILED)")
+        else:
+            print(f"[DEBUG] Ошибка получения статуса: {status_resp.status_code}")
+
+
+    raise Exception("Таймаут: генерация заняла слишком много времени")
+
+
+# ========== ОСНОВНОЙ ЦИКЛ ==========
+def poll_updates():
+    last_update_id = 0
+    print("🟢 Начинаю прослушивание обновлений...")
+
+
+    while True:
+        try:
+            resp = requests.get(API_URL + "/getUpdates", 
+                              params={"offset": last_update_id + 1, "timeout": 30}, 
+                              timeout=45)
+            
+            if resp.status_code == 200:
+                updates = resp.json().get("result", [])
+                for update in updates:
+                    last_update_id = update["update_id"]
+
+
+                    if "callback_query" in update:
+                        cb = update["callback_query"]
+                        chat_id = cb["message"]["chat"]["id"]
+                        user_id = cb["from"]["id"]
+                        data = cb["data"]
+                        requests.post(API_URL + "/answerCallbackQuery", json={"callback_query_id": cb["id"]})
+
+
+                        if data == "gen_text":
+                            user_states[chat_id] = "awaiting_text"
+                            send_message(chat_id, "🎲 Напиши описание модели:")
+                        elif data == "gen_photo":
+                            user_states[chat_id] = "awaiting_photo"
+                            send_message(chat_id, "📸 Отправь фото (можно с подписью).")
+                        elif data == "buy_premium":
+                            send_message(chat_id, "💎 Premium (199 ⭐) пока в разработке.")
+
+
+                    elif "message" in update:
+                        msg = update["message"]
+                        chat_id = msg["chat"]["id"]
+                        user_id = msg["from"]["id"]
+
+
+                        if msg.get("text") == "/start":
+                            send_message(chat_id, "👋 Привет! Я генерирую 3D-модели для печати.\nБесплатно: 3 модели в день.", main_keyboard())
+                            continue
+
+
+                        # Генерация по тексту
+                        if msg.get("text") and user_states.get(chat_id) == "awaiting_text":
+                            del user_states[chat_id]
+                            tier, left = get_user(user_id)
+                            if tier != "premium" and left <= 0:
+                                send_message(chat_id, "❌ Лимит на сегодня исчерпан.")
+                                continue
+                            send_message(chat_id, "⏳ Генерирую по тексту...")
+                            try:
+                                model_bytes = generate_3d_model(prompt=msg["text"])
+                                if tier != "premium":
+                                    decrement_limit(user_id)
+                                send_document(chat_id, model_bytes, "model.glb", "✅ Готово!")
+                            except Exception as e:
+                                send_message(chat_id, f"❌ Ошибка: {str(e)[:300]}")
+
+
+                        # Генерация по фото
+                        elif "photo" in msg and user_states.get(chat_id) == "awaiting_photo":
+                            del user_states[chat_id]
+                            tier, left = get_user(user_id)
+                            if tier != "premium" and left <= 0:
+                                send_message(chat_id, "❌ Лимит исчерпан.")
+                                continue
+                            send_message(chat_id, "⏳ Обрабатываю фото... (2–6 минут)")
+                            try:
+                                file_id = msg["photo"][-1]["file_id"]
+                                file_info = requests.get(f"{API_URL}/getFile?file_id={file_id}", timeout=25).json()
+                                if not file_info.get("ok"):
+                                    raise Exception("Не удалось получить файл")
+                                
+                                file_path = file_info["result"]["file_path"]
+                                file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                
+                                photo_resp = requests.get(file_url, timeout=60)
+                                if photo_resp.status_code != 200:
+                                    raise Exception("Не удалось скачать фото")
+                                
+                                encoded = base64.b64encode(photo_resp.content).decode('utf-8')
+                                caption = msg.get("caption", "")
+                                
+                                model_bytes = generate_3d_model(image_base64=encoded, image_caption=caption)
+                                if tier != "premium":
+                                    decrement_limit(user_id)
+                                send_document(chat_id, model_bytes, "model.glb", "✅ Готово! Модель по фото")
+                            except Exception as e:
+                                send_message(chat_id, f"❌ Ошибка: {str(e)[:350]}")
+
+
+            time.sleep(1)
+        except Exception as e:
+            print(f"❌ Критическая ошибка в цикле: {e}")
+            time.sleep(5)
+
+
+# ========== FLASK ==========
+@app.route('/')
+def home():
+    return "🤖 3D Bot работает"
+
+
+if __name__ == "__main__":
+    import threading
+    threading.Thread(target=poll_updates, daemon=True).start()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
