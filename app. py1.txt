@@ -1,0 +1,86 @@
+﻿import requests
+import json
+import time
+import os
+from flask import Flask
+
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+MESHY_API_KEY = os.environ.get("MESHY_API_KEY")
+
+
+if not TELEGRAM_BOT_TOKEN or not MESHY_API_KEY:
+    raise ValueError("Токены не заданы!")
+
+
+app = Flask(__name__)
+API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+
+
+print("🟢 Бот запускается...")
+
+
+def send_message(chat_id, text):
+    requests.post(API_URL + "/sendMessage", json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML"
+    })
+
+
+# ========== ОСНОВНОЙ ЦИКЛ (упрощённый для диагностики) ==========
+def poll_updates():
+    last_update_id = 0
+    print("🟢 Прослушивание обновлений начато...")
+
+
+    while True:
+        try:
+            response = requests.get(API_URL + "/getUpdates", 
+                                  params={"offset": last_update_id + 1, "timeout": 30}, 
+                                  timeout=40)
+            
+            if response.status_code == 200:
+                updates = response.json().get("result", [])
+                
+                for update in updates:
+                    last_update_id = update["update_id"]
+                    
+                    if "message" in update:
+                        msg = update["message"]
+                        chat_id = msg["chat"]["id"]
+                        user_id = msg["from"]["id"]
+                        text = msg.get("text", "")
+
+
+                        print(f"[LOG] Получено сообщение от {user_id}: {text}")
+
+
+                        if text == "/start":
+                            send_message(chat_id, "👋 Бот работает!\n\nОтправь текст или фото для теста.")
+                        else:
+                            send_message(chat_id, f"Получено: {text}\n\nБот живой ✅")
+                    
+                    elif "photo" in update.get("message", {}):
+                        chat_id = update["message"]["chat"]["id"]
+                        print(f"[LOG] Получено фото от пользователя")
+                        send_message(chat_id, "✅ Фото получено! Бот работает.")
+
+
+        except Exception as e:
+            print(f"❌ Ошибка в цикле: {e}")
+
+
+        time.sleep(1)
+
+
+@app.route('/')
+def home():
+    return "Бот запущен"
+
+
+if __name__ == "__main__":
+    import threading
+    threading.Thread(target=poll_updates, daemon=True).start()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
