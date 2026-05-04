@@ -1,0 +1,452 @@
+﻿import os
+import json
+import time
+import threading
+import requests
+import hashlib
+import hmac
+import base64
+from datetime import datetime
+from flask import Flask
+
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+MESHY_API_KEY = os.environ.get("MESHY_API_KEY")
+TENCENT_SECRET_ID = os.environ.get("TENCENT_SECRET_ID")
+TENCENT_SECRET_KEY = os.environ.get("TENCENT_SECRET_KEY")
+
+
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN missing")
+
+
+API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+
+
+def send_message(chat_id, text, keyboard=None):
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        payload["reply_markup"] = json.dumps(keyboard)
+    requests.post(API_URL + "/sendMessage", json=payload, timeout=10)
+
+
+def send_document(chat_id, file_content, filename="model.stl", caption=""):
+    if not file_content:
+        send_message(chat_id, "❌ Ошибка: файл пустой, попробуй ещё раз.")
+        return
+    files = {"document": (filename, file_content)}
+    data = {"chat_id": chat_id, "caption": caption}
+    requests.post(API_URL + "/sendDocument", files=files, data=data, timeout=60)
+
+
+def send_invoice(chat_id, title, description, payload, stars_amount):
+    url = API_URL + "/sendInvoice"
+    prices = [{"label": "Оплата", "amount": stars_amount}]
+    data = {
+        "chat_id": chat_id,
+        "title": title,
+        "description": description,
+        "payload": payload,
+        "provider_token": "",
+        "currency": "XTR",
+        "prices": prices,
+        "start_parameter": "generate_3d"
+    }
+    requests.post(url, json=data)
+
+
+main_keyboard = {
+    "inline_keyboard": [
+        [{"text": "🎲 Meshy (Быстрая)", "callback_data": "gen_meshy"}],
+        [{"text": "🔧 Hunyuan (Точная)", "callback_data": "gen_hunyuan"}],
+        [{"text": "🎟 Разовая генерация (40⭐)", "callback_data": "buy_one"}],
+        [{"text": "💎 Подписка (170⭐/мес)", "callback_data": "subscription"}],
+        [{"text": "📦 Мои модели", "callback_data": "my_models"}],
+        [{"text": "❓ Что тут можно сделать", "callback_data": "help_info"}],
+    ]
+}
+back_keyboard = {
+    "inline_keyboard": [[{"text": "🔙 Главное меню", "callback_data": "menu"}]]
+}
+
+
+user_states = {}
+user_limits = {}          # {user_id: (date, meshy_count, hunyuan_count)}
+user_paid_one = {}        # {user_id: date} разовая покупка
+user_subscription = {}    # {user_id: expiry_date} подписка
+
+
+HUNYUAN_HOST = "hunyuan.intl.tencentcloudapi.com"
+MESHY_API_URL = "https://api.meshy.ai/openapi/v1"
+
+
+def get_tencent_headers(action, payload):
+    service = "hunyuan"
+    host = HUNYUAN_HOST
+    region = "ap-singapore"
+    version = "2023-09-01"
+    algorithm = "TC3-HMAC-SHA256"
+    timestamp = int(time.time())
+    date = datetime.utcfromtimestamp(timestamp).strftime("%Y-%m-%d")
+    
+    http_method = "POST"
+    canonical_uri = "/"
+    canonical_querystring = ""
+    ct = "application/json"
+    canonical_headers = f"content-type:{ct}\nhost:{host}\n"
+    signed_headers = "content-type;host"
+    hashed_payload = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    canonical_request = f"{http_method}\n{canonical_uri}\n{canonical_querystring}\n{canonical_headers}\n{signed_headers}\n{hashed_payload}"
+    
+    credential_scope = f"{date}/{service}/tc3_request"
+    hashed_canonical = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
+    string_to_sign = f"{algorithm}\n{timestamp}\n{credential_scope}\n{hashed_canonical}"
+    
+    secret_date = hmac.new(("TC3" + TENCENT_SECRET_KEY).encode("utf-8"), date.encode("utf-8"), hashlib.sha256).digest()
+    secret_service = hmac.new(secret_date, service.encode("utf-8"), hashlib.sha256).digest()
+    secret_signing = hmac.new(secret_service, b"tc3_request", hashlib.sha256).digest()
+    signature = hmac.new(secret_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    
+    authorization = f"{algorithm} Credential={TENCENT_SECRET_ID}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    
+    return {
+        "Authorization": authorization,
+        "Content-Type": ct,
+        "Host": host,
+        "X-TC-Action": action,
+        "X-TC-Timestamp": str(timestamp),
+        "X-TC-Version": version,
+        "X-TC-Region": region
+    }
+
+
+def hunyuan_generate_from_text(prompt):
+    action = "SubmitHunyuanTo3DProJob"
+    payload = json.dumps({"Prompt": prompt})
+    headers = get_tencent_headers(action, payload)
+    resp = requests.post(f"https://{HUNYUAN_HOST}", headers=headers, data=payload, timeout=30)
+    data = resp.json()
+    if "Response" not in data or "JobId" not in data["Response"]:
+        raise Exception(f"Hunyuan submit error: {data}")
+    job_id = data["Response"]["JobId"]
+
+
+    action = "QueryHunyuanTo3DProJob"
+    for _ in range(50):
+        time.sleep(6)
+        payload = json.dumps({"JobId": job_id})
+        headers = get_tencent_headers(action, payload)
+        resp = requests.post(f"https://{HUNYUAN_HOST}", headers=headers, data=payload, timeout=30)
+        data = resp.json()
+        if "Response" in data:
+            status = data["Response"].get("Status")
+            if status == "DONE":
+                result_files = data["Response"].get("ResultFile3Ds", [])
+                if result_files and "Url" in result_files[0]:
+                    glb_url = result_files[0]["Url"]
+                    conv_action = "Convert3DFormat"
+                    conv_payload = json.dumps({"File3D": glb_url, "Format": "STL"})
+                    conv_headers = get_tencent_headers(conv_action, conv_payload)
+                    conv_resp = requests.post(f"https://{HUNYUAN_HOST}", headers=conv_headers, data=conv_payload, timeout=60)
+                    conv_data = conv_resp.json()
+                    if "Response" in conv_data and "ResultFile3D" in conv_data["Response"]:
+                        stl_url = conv_data["Response"]["ResultFile3D"]
+                        model_resp = requests.get(stl_url, timeout=60)
+                        if model_resp.status_code == 200:
+                            return model_resp.content
+                        else:
+                            raise Exception("Failed to download STL")
+                    else:
+                        raise Exception(f"Conversion error: {conv_data}")
+                else:
+                    raise Exception("No result file URL")
+            elif status == "FAIL":
+                raise Exception("Generation failed")
+    raise Exception("Hunyuan timeout")
+
+
+def hunyuan_generate_from_photo(image_base64):
+    action = "SubmitHunyuanTo3DProJob"
+    payload = json.dumps({"ImageBase64": image_base64})
+    headers = get_tencent_headers(action, payload)
+    resp = requests.post(f"https://{HUNYUAN_HOST}", headers=headers, data=payload, timeout=30)
+    data = resp.json()
+    if "Response" not in data or "JobId" not in data["Response"]:
+        raise Exception(f"Hunyuan submit error: {data}")
+    job_id = data["Response"]["JobId"]
+    
+    action = "QueryHunyuanTo3DProJob"
+    for _ in range(50):
+        time.sleep(6)
+        payload = json.dumps({"JobId": job_id})
+        headers = get_tencent_headers(action, payload)
+        resp = requests.post(f"https://{HUNYUAN_HOST}", headers=headers, data=payload, timeout=30)
+        data = resp.json()
+        if "Response" in data:
+            status = data["Response"].get("Status")
+            if status == "DONE":
+                result_files = data["Response"].get("ResultFile3Ds", [])
+                if result_files and "Url" in result_files[0]:
+                    glb_url = result_files[0]["Url"]
+                    conv_action = "Convert3DFormat"
+                    conv_payload = json.dumps({"File3D": glb_url, "Format": "STL"})
+                    conv_headers = get_tencent_headers(conv_action, conv_payload)
+                    conv_resp = requests.post(f"https://{HUNYUAN_HOST}", headers=conv_headers, data=conv_payload, timeout=60)
+                    conv_data = conv_resp.json()
+                    if "Response" in conv_data and "ResultFile3D" in conv_data["Response"]:
+                        stl_url = conv_data["Response"]["ResultFile3D"]
+                        model_resp = requests.get(stl_url, timeout=60)
+                        if model_resp.status_code == 200:
+                            return model_resp.content
+                        else:
+                            raise Exception("Failed to download STL")
+                    else:
+                        raise Exception(f"Conversion error: {conv_data}")
+                else:
+                    raise Exception("No result file URL")
+            elif status == "FAIL":
+                raise Exception("Generation failed")
+    raise Exception("Hunyuan timeout")
+
+
+def meshy_generate_from_text(prompt):
+    if not MESHY_API_KEY:
+        raise Exception("Meshy API key not configured")
+    headers = {"Authorization": f"Bearer {MESHY_API_KEY}", "Content-Type": "application/json"}
+    payload = {"mode": "preview", "prompt": prompt, "art_style": "realistic", "should_remesh": True}
+    resp = requests.post(f"{MESHY_API_URL}/text-to-3d", headers=headers, json=payload, timeout=30)
+    if resp.status_code not in (200, 202):
+        raise Exception(f"Meshy error: {resp.status_code}")
+    task_id = resp.json().get("result")
+    if not task_id:
+        raise Exception("No task_id")
+    
+    while True:
+        time.sleep(5)
+        r = requests.get(f"{MESHY_API_URL}/text-to-3d/{task_id}", headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("status") == "SUCCEEDED":
+                model_url = data.get("model_urls", {}).get("glb")
+                if model_url:
+                    return requests.get(model_url).content
+            elif data.get("status") == "FAILED":
+                raise Exception("Meshy failed")
+        elif r.status_code == 404:
+            time.sleep(3)
+
+
+def meshy_generate_from_photo(image_base64):
+    if not MESHY_API_KEY:
+        raise Exception("Meshy API key not configured")
+    headers = {"Authorization": f"Bearer {MESHY_API_KEY}", "Content-Type": "application/json"}
+    payload = {"image_base64": image_base64, "should_remesh": True}
+    resp = requests.post(f"{MESHY_API_URL}/image-to-3d", headers=headers, json=payload, timeout=30)
+    if resp.status_code not in (200, 202):
+        raise Exception(f"Meshy error: {resp.status_code}")
+    task_id = resp.json().get("result")
+    if not task_id:
+        raise Exception("No task_id")
+    
+    while True:
+        time.sleep(5)
+        r = requests.get(f"{MESHY_API_URL}/image-to-3d/{task_id}", headers=headers)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("status") == "SUCCEEDED":
+                model_url = data.get("model_urls", {}).get("glb")
+                if model_url:
+                    return requests.get(model_url).content
+            elif data.get("status") == "FAILED":
+                raise Exception("Meshy failed")
+        elif r.status_code == 404:
+            time.sleep(3)
+
+
+def can_generate(user_id, engine):
+    today = int(time.time() // 86400)
+    expiry = user_subscription.get(user_id, 0)
+    
+    # Подписка активна
+    if expiry > time.time():
+        return True
+    
+    # Разовый платёж сегодня
+    if user_paid_one.get(user_id) == today:
+        return True
+    
+    # Проверка бесплатных лимитов
+    if user_id not in user_limits or user_limits[user_id][0] != today:
+        user_limits[user_id] = (today, 0, 0)
+    
+    meshy_count, hunyuan_count = user_limits[user_id][1], user_limits[user_id][2]
+    
+    if engine == "meshy":
+        return meshy_count < 20  # 20 моделей в день через Meshy
+    else:
+        return hunyuan_count < 10  # 10 моделей в день через Hunyuan
+
+
+def use_generation(user_id, engine):
+    today = int(time.time() // 86400)
+    expiry = user_subscription.get(user_id, 0)
+    
+    # Подписка или разовый платёж — не уменьшаем лимит
+    if expiry > time.time() or user_paid_one.get(user_id) == today:
+        return
+    
+    if user_id not in user_limits or user_limits[user_id][0] != today:
+        user_limits[user_id] = (today, 0, 0)
+    
+    meshy_count, hunyuan_count = user_limits[user_id][1], user_limits[user_id][2]
+    
+    if engine == "meshy":
+        user_limits[user_id] = (today, meshy_count + 1, hunyuan_count)
+    else:
+        user_limits[user_id] = (today, meshy_count, hunyuan_count + 1)
+
+
+def handle_help_info(chat_id):
+    text = (
+        "❓ *Что умеет бот:*\n\n"
+        "🎲 *Meshy (Быстрая)* — генерирует 3D-модель по тексту или фото. Подходит для фигурок, органики, быстрых прототипов.\n"
+        "Бесплатно: 20 моделей в день.\n\n"
+        "🔧 *Hunyuan (Точная)* — генерирует инженерные детали по тексту или фото. Подходит для печати функциональных узлов.\n"
+        "Бесплатно: 10 моделей в день.\n\n"
+        "🎟 *Разовая генерация* — 40⭐ (≈70₽). Снимает лимит на 1 модель.\n\n"
+        "💎 *Подписка* — 170⭐/мес (≈299₽). Безлимит на месяц.\n\n"
+        "📦 *История* — скоро.\n\n"
+        "Просто выбери движок и отправь текст или фото."
+    )
+    send_message(chat_id, text, keyboard=back_keyboard)
+
+
+def poll():
+    global last_update_id
+    last_update_id = 0
+    while True:
+        try:
+            resp = requests.get(API_URL + "/getUpdates", params={"offset": last_update_id + 1, "timeout": 30}, timeout=35)
+            if resp.status_code == 200:
+                for update in resp.json().get("result", []):
+                    last_update_id = update["update_id"]
+                    
+                    # Успешная оплата
+                    if "message" in update and "successful_payment" in update["message"]:
+                        user_id = update["message"]["from"]["id"]
+                        payload = update["message"]["successful_payment"]["invoice_payload"]
+                        if payload == "single_generation":
+                            user_paid_one[user_id] = int(time.time() // 86400)
+                            send_message(user_id, "✅ Разовая генерация активирована! Теперь выбери движок и отправь текст или фото.")
+                        elif payload == "monthly_subscription":
+                            user_subscription[user_id] = time.time() + 30 * 86400
+                            send_message(user_id, "✅ Подписка на месяц активирована! Безлимит до " + time.ctime(user_subscription[user_id]))
+                        continue
+                    
+                    if "callback_query" in update:
+                        cb = update["callback_query"]
+                        chat_id = cb["message"]["chat"]["id"]
+                        data = cb["data"]
+                        requests.post(API_URL + "/answerCallbackQuery", json={"callback_query_id": cb["id"]})
+                        
+                        if data == "menu":
+                            send_message(chat_id, "Выбери действие:", keyboard=main_keyboard)
+                        elif data == "help_info":
+                            handle_help_info(chat_id)
+                        elif data == "buy_one":
+                            send_invoice(chat_id, "Разовая генерация 3D-модели", "Одна генерация без подписки", "single_generation", 40)
+                        elif data == "subscription":
+                            send_invoice(chat_id, "Premium подписка", "Безлимит на месяц", "monthly_subscription", 170)
+                        elif data == "my_models":
+                            send_message(chat_id, "📦 История появится позже.", keyboard=back_keyboard)
+                        elif data == "gen_meshy":
+                            user_states[chat_id] = ("meshy", None)
+                            send_message(chat_id, "🎲 Выбран Meshy. Теперь отправь текст или фото.", keyboard=back_keyboard)
+                        elif data == "gen_hunyuan":
+                            user_states[chat_id] = ("hunyuan", None)
+                            send_message(chat_id, "🔧 Выбран Hunyuan. Теперь отправь текст или фото.", keyboard=back_keyboard)
+                    
+                    elif "message" in update:
+                        msg = update["message"]
+                        chat_id = msg["chat"]["id"]
+                        user_id = msg["from"]["id"]
+                        
+                        if "text" in msg and msg["text"] == "/start":
+                            send_message(chat_id, "👋 Привет! Я бот для генерации 3D-моделей.\n\nБесплатно:\n🎲 Meshy — 20 моделей/день\n🔧 Hunyuan — 10 моделей/день\n\n🎟 Разовая генерация — 40⭐\n💎 Подписка — 170⭐/мес\n\nВыбери движок:", keyboard=main_keyboard)
+                            continue
+                        
+                        if chat_id in user_states:
+                            engine, _ = user_states.pop(chat_id)
+                            
+                            if not can_generate(user_id, engine):
+                                send_message(chat_id, f"❌ Бесплатный лимит для {engine.upper()} на сегодня закончился. Купи разовую генерацию или подписку.", keyboard=main_keyboard)
+                                continue
+                            
+                            if "text" in msg:
+                                prompt = msg["text"]
+                                send_message(chat_id, f"⏳ Генерирую через {engine.upper()} по тексту... (1-3 мин)")
+                                try:
+                                    if engine == "meshy":
+                                        model = meshy_generate_from_text(prompt)
+                                    else:
+                                        model = hunyuan_generate_from_text(prompt)
+                                    if model:
+                                        use_generation(user_id, engine)
+                                        send_document(chat_id, model, caption=f"{engine.upper()} (текст): {prompt[:100]}")
+                                        send_message(chat_id, "✅ Готово!")
+                                    else:
+                                        send_message(chat_id, "❌ Ошибка: модель не получена, попробуй ещё раз.")
+                                except Exception as e:
+                                    send_message(chat_id, f"❌ Ошибка: {str(e)}")
+                            
+                            elif "photo" in msg:
+                                send_message(chat_id, f"⏳ Генерирую через {engine.upper()} по фото... (1-3 мин)")
+                                try:
+                                    file_id = msg["photo"][-1]["file_id"]
+                                    file_info = requests.get(API_URL + f"/getFile?file_id={file_id}").json()
+                                    file_path = file_info["result"]["file_path"]
+                                    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                                    photo_data = requests.get(file_url).content
+                                    image_base64 = base64.b64encode(photo_data).decode('utf-8')
+                                    
+                                    if engine == "meshy":
+                                        model = meshy_generate_from_photo(image_base64)
+                                    else:
+                                        model = hunyuan_generate_from_photo(image_base64)
+                                    
+                                    if model:
+                                        use_generation(user_id, engine)
+                                        send_document(chat_id, model, caption=f"{engine.upper()} (по фото)")
+                                        send_message(chat_id, "✅ Готово!")
+                                    else:
+                                        send_message(chat_id, "❌ Ошибка: модель не получена, попробуй ещё раз.")
+                                except Exception as e:
+                                    send_message(chat_id, f"❌ Ошибка: {str(e)}")
+                            else:
+                                send_message(chat_id, "Пожалуйста, отправь текст или фото.", keyboard=back_keyboard)
+                        else:
+                            send_message(chat_id, "Сначала выбери движок в меню.", keyboard=main_keyboard)
+            time.sleep(1)
+        except Exception as e:
+            print(f"Poll error: {e}")
+            time.sleep(5)
+
+
+flask_app = Flask(__name__)
+
+
+@flask_app.route('/')
+def home():
+    return "Bot running (Meshy + Hunyuan + payments)"
+
+
+@flask_app.route('/health')
+def health():
+    return "OK"
+
+
+if __name__ == "__main__":
+    print("🟢 Bot polling started")
+    threading.Thread(target=poll, daemon=True).start()
+    port = int(os.environ.get("PORT", 5000))
+    flask_app.run(host="0.0.0.0", port=port)
