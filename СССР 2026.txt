@@ -1,0 +1,126 @@
+﻿import os
+import json
+import time
+import threading
+import requests
+import hashlib
+import hmac
+import base64
+from datetime import datetime
+from collections import defaultdict
+from flask import Flask
+
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TENCENT_SECRET_ID = os.environ.get("TENCENT_SECRET_ID")
+TENCENT_SECRET_KEY = os.environ.get("TENCENT_SECRET_KEY")
+ADMIN_CHAT_ID = 703281454  # Твой Telegram ID
+
+
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN missing")
+if not TENCENT_SECRET_ID or not TENCENT_SECRET_KEY:
+    raise ValueError("TENCENT_SECRET_ID and TENCENT_SECRET_KEY required")
+
+
+API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+HUNYUAN_HOST = "hunyuan.intl.tencentcloudapi.com"
+
+
+# ========== ЗАЩИТА ОТ СПАМА ==========
+user_rate_limit = defaultdict(list)
+USER_REQUESTS_PER_MINUTE = 3
+USER_REQUESTS_PER_HOUR = 20
+
+
+def check_rate_limit(user_id):
+    now = time.time()
+    user_rate_limit[user_id] = [t for t in user_rate_limit[user_id] if t > now - 3600]
+    minute_ago = now - 60
+    minute_requests = [t for t in user_rate_limit[user_id] if t > minute_ago]
+    if len(minute_requests) >= USER_REQUESTS_PER_MINUTE:
+        return False, "Слишком много запросов. Подождите минуту."
+    if len(user_rate_limit[user_id]) >= USER_REQUESTS_PER_HOUR:
+        return False, "Лимит запросов на час исчерпан. Попробуйте позже."
+    user_rate_limit[user_id].append(now)
+    return True, ""
+
+
+def send_alert(message):
+    if ADMIN_CHAT_ID:
+        try:
+            requests.post(API_URL + "/sendMessage", json={
+                "chat_id": ADMIN_CHAT_ID,
+                "text": f"⚠️ АЛЕРТ БОТА:\n{message}",
+                "parse_mode": "HTML"
+            }, timeout=5)
+        except:
+            pass
+
+
+# ========== ОТПРАВКА СООБЩЕНИЙ ==========
+def send_message(chat_id, text, keyboard=None):
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        payload["reply_markup"] = json.dumps(keyboard)
+    requests.post(API_URL + "/sendMessage", json=payload, timeout=10)
+
+
+def send_document(chat_id, file_content, filename="model.stl", caption=""):
+    if not file_content:
+        send_message(chat_id, "❌ Ошибка: файл пустой, попробуй ещё раз.")
+        return
+    files = {"document": (filename, file_content)}
+    data = {"chat_id": chat_id, "caption": caption}
+    requests.post(API_URL + "/sendDocument", files=files, data=data, timeout=60)
+
+
+# ========== ПЕРЕСЫЛКА СООБЩЕНИЙ И ОТВЕТЫ АДМИНА ==========
+last_user_reply = {}  # {chat_id: user_id, ...} — хранит, кому отвечать
+
+
+def forward_to_admin(update, text, user_id):
+    """Пересылает сообщение от пользователя админу и запоминает, кому отвечать"""
+    if ADMIN_CHAT_ID:
+        try:
+            user = update.effective_user
+            username = f"@{user.username}" if user.username else f"ID: {user.id}"
+            name = user.first_name or ""
+            
+            # Запоминаем, что админу нужно будет ответить этому пользователю
+            last_user_reply[ADMIN_CHAT_ID] = user_id
+            
+            requests.post(API_URL + "/sendMessage", json={
+                "chat_id": ADMIN_CHAT_ID,
+                "text": f"📩 *Новое сообщение от пользователя*\n"
+                        f"👤 {name} ({username})\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"💬 {text}\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"🆔 ID: `{user.id}`\n\n"
+                        f"💡 *Чтобы ответить, просто напишите сообщение в этот чат*",
+                "parse_mode": "Markdown"
+            }, timeout=5)
+        except Exception as e:
+            print(f"Ошибка пересылки: {e}")
+
+
+def reply_to_user(admin_chat_id, admin_message_text):
+    """Отправляет ответ пользователю, если админ отвечает в чат с ботом"""
+    if admin_chat_id == ADMIN_CHAT_ID and admin_chat_id in last_user_reply:
+        user_id = last_user_reply[admin_chat_id]
+        send_message(user_id, f"📨 *Ответ разработчика:*\n{admin_message_text}")
+        send_message(admin_chat_id, f"✅ Ответ отправлен пользователю {user_id}")
+        # Не удаляем last_user_reply, чтобы можно было продолжать диалог
+    else:
+        # Если админ пишет что-то не в ответ — просто игнорируем или отправляем подсказку
+        if admin_chat_id == ADMIN_CHAT_ID:
+            send_message(admin_chat_id, "ℹ️ Вы не ответили на сообщение пользователя. Чтобы ответить, нажмите «Ответить» на пересланном сообщении.")
+
+
+# ========== ОСТАЛЬНОЙ КОД БОТА (ГЕНЕРАЦИЯ И Т.Д.) ==========
+# ... (здесь весь остальной код: меню, клавиатуры, Hunyuan, лимиты и т.д.)
+
+
+# В обработчике сообщений нужно добавить проверку: если сообщение от админа — не пересылать ему же
+# И вызывать reply_to_user для текстовых сообщений от админа
