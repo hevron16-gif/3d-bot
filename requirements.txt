@@ -9,8 +9,8 @@ pydantic>=2.0
 # Database
 # sqlite3 — встроен в Python
 
-# Vector memory (самообучение)
-chromadb>=0.5.0
+# Vector memory (самообучение) — опционально, не блокирует сборку
+chromadb>=0.5.0; python_version < '3.13'
 
 # ELM327 (раскомментировать при наличии адаптера)
 # pyserial>=3.5

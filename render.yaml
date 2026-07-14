@@ -8,7 +8,7 @@ services:
     runtime: python313
     region: frankfurt
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
       - key: DEEPSEEK_API_KEY
