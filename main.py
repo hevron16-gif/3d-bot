@@ -1,9 +1,9 @@
 """
-AutoDiag AI v1.0 — Главный модуль
+AutoDiag AI v1.0.10 — Главный модуль
 CarDiagnosticAI: ИИ-диагностика автомобилей с поддержкой ELM327,
 офлайн-базы SQLite, самообучения ChromaDB и облачной синхронизации.
 
-Версия: 1.0 (полная)
+Версия: 1.0.10 (WAF-bypass fix)
 """
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
@@ -65,6 +65,7 @@ _APP_TAMPER_MODE = "normal"  # normal | free_only | shutdown
 
 from security import (
     SecurityHeadersMiddleware, BodySizeMiddleware,
+    CloudflareMiddleware, WAFBypassMiddleware, DiagnoseWAFShield,
     general_limiter, ai_limiter, auth_limiter, download_limiter,
     sanitize_error_code, sanitize_vin, sanitize_car_brand,
     sanitize_user_id, sanitize_text,
@@ -116,7 +117,7 @@ def _require_paid(user_id: str):
 app = FastAPI(
     title="AutoDiag AI",
     description="ИИ-диагностика автомобилей. ELM327 + DeepSeek + ChromaDB + Облако.",
-    version="1.0.0",
+    version="1.0.10",
 )
 
 # CORS — только доверенные origins (можно переопределить через CORS_ORIGINS)
@@ -129,11 +130,95 @@ app.add_middleware(
     max_age=600,
 )
 
-# Security headers (X-Content-Type-Options, X-Frame-Options, и др.)
+# 1. Cloudflare: OPTIONS preflight, CF headers, UA detection
+app.add_middleware(CloudflareMiddleware)
+
+# 2. Diagnose WAF shield: полностью отключает WAF-проверки на /diagnose
+app.add_middleware(DiagnoseWAFShield)
+
+# 3. WAF bypass: извлекает JSON из base64/query/form-data/text-plain ДО эндпоинтов
+app.add_middleware(WAFBypassMiddleware)
+
+# 4. Security headers: CSP, HSTS, X-Content-Type-Options etc.
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Ограничение размера тела запроса (100 KB)
 app.add_middleware(BodySizeMiddleware)
+
+# ==================== Exception Handlers (Cloudflare-friendly) ====================
+
+@app.exception_handler(403)
+async def waf_blocked_handler(request: Request, exc: HTTPException):
+    """Обработчик 403: подсказка клиенту, что делать при блокировке."""
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": "forbidden",
+            "detail": str(exc.detail) if exc.detail else "Доступ запрещён",
+            "hint": "Используйте GET /diagnose?error_code=...&car_brand=... вместо POST.",
+            "cf_ray": request.headers.get("CF-Ray", ""),
+        },
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.exception_handler(429)
+async def rate_limit_handler(request: Request, exc: HTTPException):
+    """Обработчик 429: подсказка по rate limiting."""
+    retry_after = 60
+    if exc.detail and isinstance(exc.detail, dict):
+        retry_after = exc.detail.get("retry_after", 60)
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "rate_limited",
+            "detail": str(exc.detail) if exc.detail else "Слишком много запросов",
+            "retry_after_seconds": retry_after,
+        },
+        headers={
+            "Retry-After": str(retry_after),
+            "X-RateLimit-Reset": str(int(time.time() + retry_after)),
+        },
+    )
+
+
+@app.exception_handler(422)
+async def unprocessable_entity_handler(request: Request, exc):
+    """
+    Обработчик 422: если DiagnoseWAFShield уже распарсил тело через WAF-bypass,
+    игнорируем ошибку валидации Pydantic и возвращаем офлайн-диагностику.
+    """
+    path = request.url.path.rstrip("/")
+    params = getattr(request.state, "diagnose_params", None)
+    if path == "/diagnose" and params and params.get("error_code"):
+        error_code = params.get("error_code", "")
+        car_brand = params.get("car_brand", "")
+        car_model = params.get("car_model", "")
+        vin = params.get("vin", "")
+        user_id = params.get("user_id", "anonymous")
+        log_request(request, user_id)
+        return _offline_diagnose(error_code, car_brand, car_model, vin, user_id)
+    # Для других путей — пробрасываем 422 как обычно
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors() if hasattr(exc, "errors") else str(exc)},
+    )
+
+
+@app.exception_handler(402)
+async def payment_required_handler(request: Request, exc: HTTPException):
+    """Обработчик 402: платная функция недоступна."""
+    return JSONResponse(
+        status_code=402,
+        content=exc.detail if isinstance(exc.detail, dict) else {
+            "error": "payment_required",
+            "detail": str(exc.detail) if exc.detail else "Требуется платная подписка",
+        },
+        headers={"X-Upgrade-URL": "/pricing/plans"},
+    )
 
 # Монтируем роутеры
 app.include_router(pricing_router)
@@ -191,7 +276,7 @@ async def updates_webhook(request: Request):
 @app.get("/updates/client-check")
 async def updates_client_check(
     seq: int = Query(default=0, description="Глобальный sequence-номер последнего применённого обновления клиента"),
-    app_version: str = Query(default="1.0.0"),
+    app_version: str = Query(default="1.0.10"),
 ):
     """
     Проверка обновлений для мобильного клиента.
@@ -491,7 +576,7 @@ async def root():
     return {
         "status": "ok",
         "product": "AutoDiag AI",
-        "version": "1.0.0",
+        "version": "1.0.10",
         "message": "Сервер работает. Агент готов.",
         "endpoints": {
             "simulator": "/sim/live, /sim/errors",
@@ -661,12 +746,64 @@ def inject_error(request: Request, body: InjectRequest,
 
 # ==================== Диагностика ====================
 
+def _extract_diagnose_params(http_request: Request, pydantic_request=None):
+    """Извлечь параметры диагностики из request.state (WAF-обход) или Pydantic-модели."""
+    params = getattr(http_request.state, "diagnose_params", None)
+    if params:
+        return (
+            params.get("error_code", ""),
+            params.get("car_brand", ""),
+            params.get("car_model", ""),
+            params.get("vin", ""),
+            params.get("context", ""),
+            params.get("user_id", "anonymous"),
+        )
+    if pydantic_request:
+        return (
+            pydantic_request.error_code,
+            pydantic_request.car_brand,
+            pydantic_request.car_model or "",
+            pydantic_request.vin or "",
+            pydantic_request.context or "",
+            "anonymous",
+        )
+    return ("", "", "", "", "", "anonymous")
+
+
 @app.post("/diagnose")
-async def diagnose(http_request: Request, request: DiagnoseRequest, user_id: str = Query(default="anonymous")):
+async def diagnose(http_request: Request, user_id: str = Query(default="anonymous")):
     """
     AI-диагностика через DeepSeek.
+    Принимает параметры из request.state (DiagnoseWAFShield) или JSON-тела.
     Требуется платная подписка (Pro/Enterprise).
     """
+    # Параметры из DiagnoseWAFShield (приоритет)
+    params = getattr(http_request.state, "diagnose_params", None)
+    if not params:
+        # Фолбэк: читаем JSON-тело вручную (не через Pydantic, чтобы избежать 422)
+        try:
+            body = await http_request.body()
+            if body:
+                import json as _json
+                data = _json.loads(body)
+                params = {
+                    "error_code": str(data.get("error_code", "")),
+                    "car_brand": str(data.get("car_brand", "")),
+                    "car_model": str(data.get("car_model", "")),
+                    "vin": str(data.get("vin", "")),
+                    "context": str(data.get("context", "")),
+                    "user_id": str(data.get("user_id", "anonymous")),
+                }
+        except Exception:
+            params = {}
+
+    error_code = params.get("error_code", "")
+    car_brand = params.get("car_brand", "")
+    car_model = params.get("car_model", "")
+    vin = params.get("vin", "")
+    context = params.get("context", "")
+    user_id = params.get("user_id", user_id)
+
     ai_limiter.is_allowed(http_request)
     log_request(http_request, user_id)
 
@@ -676,23 +813,23 @@ async def diagnose(http_request: Request, request: DiagnoseRequest, user_id: str
     # Проверка подписки
     if not is_paid(user_id):
         # Возвращаем офлайн-диагностику для бесплатных
-        return _offline_diagnose(request.error_code, request.car_brand,
-                                 request.car_model, request.vin, user_id)
+        return _offline_diagnose(error_code, car_brand,
+                                 car_model, vin, user_id)
 
     if not DEEPSEEK_API_KEY:
         # Fallback на офлайн если API-ключ не настроен
-        return _offline_diagnose(request.error_code, request.car_brand,
-                                 request.car_model, request.vin, user_id,
+        return _offline_diagnose(error_code, car_brand,
+                                 car_model, vin, user_id,
                                  note="⚠️ AI-ключ не настроен. Использована офлайн-база.")
 
     # Формируем промпт
     prompt = (
         f"Ты — эксперт по диагностике российских автомобилей.\n\n"
-        f"Код ошибки: {request.error_code}\n"
-        f"Марка: {request.car_brand}\n"
-        f"Модель: {request.car_model or 'не указана'}\n"
-        f"VIN: {request.vin or 'не указан'}\n"
-        f"Дополнительный контекст: {request.context or 'нет'}\n\n"
+        f"Код ошибки: {error_code}\n"
+        f"Марка: {car_brand}\n"
+        f"Модель: {car_model or 'не указана'}\n"
+        f"VIN: {vin or 'не указан'}\n"
+        f"Дополнительный контекст: {context or 'нет'}\n\n"
         f"Дай точный диагноз и пошаговые рекомендации по ремонту. "
         f"Используй только проверенные данные. Не выдумывай. "
         f"Учитывай особенности российских авто, ГБО и спецтехники.\n\n"
@@ -730,10 +867,10 @@ async def diagnose(http_request: Request, request: DiagnoseRequest, user_id: str
         # Сохраняем в историю
         diag_id = save_diagnosis(
             user_id=user_id,
-            error_code=request.error_code,
-            car_brand=request.car_brand,
-            car_model=request.car_model or "",
-            vin=request.vin or "",
+            error_code=error_code,
+            car_brand=car_brand,
+            car_model=car_model or "",
+            vin=vin or "",
             diagnosis=diagnosis_text,
             source="ai",
         )
@@ -741,8 +878,8 @@ async def diagnose(http_request: Request, request: DiagnoseRequest, user_id: str
         # Сохраняем в ChromaDB (самообучение)
         if chroma.available:
             chroma.add_case(
-                error_code=request.error_code,
-                car_brand=request.car_brand,
+                error_code=error_code,
+                car_brand=car_brand,
                 diagnosis=diagnosis_text,
                 solution="; ".join(parsed.get("solutions", [])),
                 user_id=user_id,
@@ -752,17 +889,17 @@ async def diagnose(http_request: Request, request: DiagnoseRequest, user_id: str
         if is_paid(user_id):
             await cloud.push_diagnosis(
                 user_id=user_id,
-                error_code=request.error_code,
-                car_brand=request.car_brand,
+                error_code=error_code,
+                car_brand=car_brand,
                 diagnosis=diagnosis_text,
                 solution="; ".join(parsed.get("solutions", [])),
             )
 
         # Исторический код
-        save_historical_code(request.error_code, "03", request.car_brand, request.car_model)
+        save_historical_code(error_code, "03", car_brand, car_model)
 
         return {
-            "error_code": request.error_code,
+            "error_code": error_code,
             "diagnosis": diagnosis_text,
             "causes": parsed.get("causes", []),
             "solutions": parsed.get("solutions", []),
@@ -773,8 +910,8 @@ async def diagnose(http_request: Request, request: DiagnoseRequest, user_id: str
 
     except Exception as e:
         # Fallback на офлайн при ошибке AI (безопасное сообщение — без ключей)
-        return _offline_diagnose(request.error_code, request.car_brand,
-                                 request.car_model, request.vin, user_id,
+        return _offline_diagnose(error_code, car_brand,
+                                 car_model, vin, user_id,
                                  note=f"⚠️ Ошибка AI. Использована офлайн-база.")
 
 
@@ -1083,7 +1220,7 @@ def simulator_state(request: Request, user_id: str = Query(default="anonymous", 
 @app.get("/health")
 def health():
     """Health-check для Render."""
-    return {"status": "healthy", "version": "1.0.9"}
+    return {"status": "healthy", "version": "1.0.10"}
 
 
 # ==================== Статус подписки (быстрый) ====================
@@ -1110,3 +1247,95 @@ if __name__ == "__main__":
         server_header=False,
         log_level="warning",
     )
+
+@app.get("/diagnose")
+async def diagnose_get(http_request: Request,
+                       error_code: str = Query(default="", description="Код ошибки OBD2"),
+                       car_brand: str = Query(default="", description="Марка авто"),
+                       car_model: str = Query(default="", description="Модель"),
+                       vin: str = Query(default="", description="VIN"),
+                       context: str = Query(default="", description="Дополнительный контекст"),
+                       user_id: str = Query(default="anonymous")):
+    """
+    AI-диагностика через GET (WAF-safe, для мобильных клиентов).
+    Принимает параметры из DiagnoseWAFShield (request.state) или query-параметров.
+    """
+    # Приоритет: параметры из WAF-shield middleware
+    e, b, m, v, c, u = _extract_diagnose_params(http_request)
+    error_code = e or error_code
+    car_brand = b or car_brand
+    car_model = m or car_model
+    vin = v or vin
+    context = c or context
+    user_id = u if u != "anonymous" else user_id
+    general_limiter.is_allowed(http_request)
+    log_request(http_request, user_id)
+    integrity.periodic_check_if_needed()
+
+    if not is_paid(user_id):
+        return _offline_diagnose(error_code, car_brand, car_model, vin, user_id)
+
+    if not DEEPSEEK_API_KEY:
+        return _offline_diagnose(error_code, car_brand, car_model, vin, user_id,
+                                 note="⚠️ AI-ключ не настроен. Использована офлайн-база.")
+
+    prompt = (
+        f"Ты — эксперт по диагностике российских автомобилей.\n\n"
+        f"Код ошибки: {error_code}\n"
+        f"Марка: {car_brand}\n"
+        f"Модель: {car_model or 'не указана'}\n"
+        f"VIN: {vin or 'не указан'}\n"
+        f"Дополнительный контекст: {context or 'нет'}\n\n"
+        f"Дай точный диагноз и пошаговые рекомендации по ремонту. "
+        f"Используй только проверенные данные. Не выдумывай. "
+        f"Учитывай особенности российских авто, ГБО и спецтехники.\n\n"
+        f"Ответ оформи в формате JSON:\n"
+        f'{{"diagnosis": "...", "causes": ["..."], "solutions": ["..."], "severity": "..."}}'
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                DEEPSEEK_URL,
+                headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": "Ты эксперт по диагностике российских автомобилей (Lada, ГАЗ, УАЗ, КамАЗ, МТЗ). Отвечай строго в формате JSON."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.1,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+        data = resp.json()
+        ai_result = data["choices"][0]["message"]["content"]
+        import json
+        try:
+            parsed = json.loads(ai_result)
+        except json.JSONDecodeError:
+            parsed = {"diagnosis": ai_result, "causes": [], "solutions": []}
+        diagnosis_text = parsed.get("diagnosis", ai_result)
+        diag_id = save_diagnosis(user_id=user_id, error_code=error_code, car_brand=car_brand,
+                                 car_model=car_model, vin=vin, diagnosis=diagnosis_text, source="ai")
+        if chroma.available:
+            chroma.add_case(error_code=error_code, car_brand=car_brand,
+                            diagnosis=diagnosis_text, solution="; ".join(parsed.get("solutions", [])),
+                            user_id=user_id)
+        if is_paid(user_id):
+            await cloud.push_diagnosis(user_id=user_id, error_code=error_code, car_brand=car_brand,
+                                       diagnosis=diagnosis_text, solution="; ".join(parsed.get("solutions", [])))
+        save_historical_code(error_code, "03", car_brand, car_model)
+        return {
+            "error_code": error_code,
+            "diagnosis": diagnosis_text,
+            "causes": parsed.get("causes", []),
+            "solutions": parsed.get("solutions", []),
+            "severity": parsed.get("severity", "medium"),
+            "source": "ai",
+            "diagnosis_id": diag_id,
+        }
+    except Exception as e:
+        logger.warning(f"AI diagnose failed: {e}")
+        return _offline_diagnose(error_code, car_brand, car_model, vin, user_id,
+                                 note=f"⚠️ Ошибка AI: {str(e)[:100]}")
