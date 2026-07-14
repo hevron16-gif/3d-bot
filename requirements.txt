@@ -1,0 +1,23 @@
+# AutoDiag AI v1.0 — Зависимости
+
+# Core
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+pydantic>=2.0
+
+# Database
+# sqlite3 — встроен в Python
+
+# Vector memory (самообучение)
+chromadb>=0.5.0
+
+# ELM327 (раскомментировать при наличии адаптера)
+# pyserial>=3.5
+# python-OBD>=0.7.1
+
+# Cloud sync
+# httpx уже указан выше
+
+# Development
+pytest>=8.0

@@ -1,0 +1,23 @@
+# AutoDiag AI v1.0 — Render Blueprint
+# https://render.com
+
+services:
+  - type: web
+    name: car-diagnostic-ai
+    env: python
+    runtime: python313
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    plan: free
+    envVars:
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: LICENSE_SECRET
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.13"
+    healthCheckPath: /health
+    autoDeploy: true
