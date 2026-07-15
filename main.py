@@ -112,12 +112,18 @@ def _require_paid(user_id: str):
             "message": "Требуется платная подписка (Pro или Enterprise).",
         })
 
+class UTF8JSONResponse(JSONResponse):
+    """JSONResponse с явным charset=utf-8 — для корректного чтения UTF-8 на клиентах."""
+    media_type = "application/json; charset=utf-8"
+
+
 # ==================== FastAPI App ====================
 
 app = FastAPI(
     title="AutoDiag AI",
     description="ИИ-диагностика автомобилей. ELM327 + DeepSeek + ChromaDB + Облако.",
-    version="1.0.10",
+    version="1.0.11",
+    default_response_class=UTF8JSONResponse,
 )
 
 # CORS — только доверенные origins (можно переопределить через CORS_ORIGINS)
@@ -150,7 +156,7 @@ app.add_middleware(BodySizeMiddleware)
 @app.exception_handler(403)
 async def waf_blocked_handler(request: Request, exc: HTTPException):
     """Обработчик 403: подсказка клиенту, что делать при блокировке."""
-    return JSONResponse(
+    return UTF8JSONResponse(
         status_code=403,
         content={
             "error": "forbidden",
@@ -171,7 +177,7 @@ async def rate_limit_handler(request: Request, exc: HTTPException):
     retry_after = 60
     if exc.detail and isinstance(exc.detail, dict):
         retry_after = exc.detail.get("retry_after", 60)
-    return JSONResponse(
+    return UTF8JSONResponse(
         status_code=429,
         content={
             "error": "rate_limited",
@@ -202,7 +208,7 @@ async def unprocessable_entity_handler(request: Request, exc):
         log_request(request, user_id)
         return _offline_diagnose(error_code, car_brand, car_model, vin, user_id)
     # Для других путей — пробрасываем 422 как обычно
-    return JSONResponse(
+    return UTF8JSONResponse(
         status_code=422,
         content={"detail": exc.errors() if hasattr(exc, "errors") else str(exc)},
     )
@@ -211,7 +217,7 @@ async def unprocessable_entity_handler(request: Request, exc):
 @app.exception_handler(402)
 async def payment_required_handler(request: Request, exc: HTTPException):
     """Обработчик 402: платная функция недоступна."""
-    return JSONResponse(
+    return UTF8JSONResponse(
         status_code=402,
         content=exc.detail if isinstance(exc.detail, dict) else {
             "error": "payment_required",
@@ -438,14 +444,14 @@ class InjectRequest(BaseModel):
 async def global_exception_handler(request: Request, exc: Exception):
     """Безопасный обработчик ошибок — не раскрывает стектрейс."""
     if isinstance(exc, HTTPException):
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=exc.status_code,
             content=exc.detail if isinstance(exc.detail, dict) else {"error": str(exc.detail)},
         )
     safe_msg = safe_error_message(exc)
     import logging
     logging.getLogger("autodiag").error(f"Unhandled error: {safe_msg}", exc_info=True)
-    return JSONResponse(
+    return UTF8JSONResponse(
         status_code=500,
         content={"error": "internal_error", "message": "Внутренняя ошибка сервера. Попробуйте позже."},
     )
@@ -1082,7 +1088,7 @@ def get_schema_image(
 
     from fastapi.responses import Response
     svg = render_schema_svg(code, schema_result["data"])
-    return Response(content=svg, media_type="image/svg+xml")
+    return Response(content=svg, media_type="image/svg+xml; charset=utf-8")
 
 
 @app.get("/schemas")
