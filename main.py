@@ -1226,7 +1226,7 @@ def simulator_state(request: Request, user_id: str = Query(default="anonymous", 
 @app.get("/health")
 def health():
     """Health-check для Render."""
-    return {"status": "healthy", "version": "1.0.10"}
+    return {"status": "healthy", "version": "1.0.11"}
 
 
 # ==================== Статус подписки (быстрый) ====================
