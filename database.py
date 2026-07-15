@@ -102,6 +102,16 @@ def init_db():
             created_at  TEXT NOT NULL,
             synced      INTEGER DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS ai_cache (
+            cache_key  TEXT PRIMARY KEY,
+            diagnosis  TEXT NOT NULL,
+            causes     TEXT DEFAULT '[]',
+            solutions  TEXT DEFAULT '[]',
+            severity   TEXT DEFAULT 'medium',
+            created_at TEXT NOT NULL,
+            hit_count  INTEGER DEFAULT 1
+        );
     """)
 
     # Заполнить базовые коды если пусто
@@ -389,3 +399,67 @@ def mark_synced(sync_ids: list[int]):
 
 # Инициализация при импорте
 init_db()
+
+
+# ===================== AI Cache =====================
+
+def lookup_ai_cache(error_code: str, car_brand: str, car_model: str = "") -> Optional[dict]:
+    """Поиск закешированного AI-ответа. Ключ: error_code + car_brand + car_model."""
+    cache_key = f"{error_code.upper()}|{car_brand.lower()}|{car_model.lower() if car_model else ''}"
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM ai_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+    if row:
+        conn.execute("UPDATE ai_cache SET hit_count = hit_count + 1 WHERE cache_key = ?", (cache_key,))
+        conn.commit()
+    conn.close()
+    return row
+
+
+def save_ai_cache(error_code: str, car_brand: str, car_model: str,
+                  diagnosis: str, causes: list[str], solutions: list[str], severity: str):
+    """Сохранить AI-ответ в кеш."""
+    import json as _json
+    cache_key = f"{error_code.upper()}|{car_brand.lower()}|{car_model.lower() if car_model else ''}"
+    conn = get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO ai_cache (cache_key, diagnosis, causes, solutions, severity, created_at)
+           VALUES (?,?,?,?,?,?)""",
+        (cache_key, diagnosis, _json.dumps(causes, ensure_ascii=False),
+         _json.dumps(solutions, ensure_ascii=False), severity,
+         datetime.now(timezone.utc).isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+# ===================== Rate Limiting (in-memory) =====================
+
+# Простое in-memory хранилище: user_id -> [timestamp, ...]
+_rate_limits: dict[str, list[datetime]] = {}
+_rate_lock = threading.Lock()
+
+def check_ai_rate_limit(user_id: str, window_seconds: int = 3600, max_calls: int = 20) -> bool:
+    """Проверка лимита AI-запросов. True = можно вызывать, False = лимит превышен."""
+    now = datetime.now(timezone.utc)
+    with _rate_lock:
+        calls = _rate_limits.get(user_id, [])
+        # Очистка старых записей
+        cutoff = now.timestamp() - window_seconds
+        calls = [t for t in calls if t.timestamp() > cutoff]
+        if len(calls) >= max_calls:
+            _rate_limits[user_id] = calls
+            return False
+        calls.append(now)
+        _rate_limits[user_id] = calls
+        return True
+
+
+def get_ai_rate_limit_remaining(user_id: str, window_seconds: int = 3600, max_calls: int = 20) -> int:
+    """Сколько AI-запросов осталось в окне."""
+    now = datetime.now(timezone.utc)
+    with _rate_lock:
+        calls = _rate_limits.get(user_id, [])
+        cutoff = now.timestamp() - window_seconds
+        calls = [t for t in calls if t.timestamp() > cutoff]
+        _rate_limits[user_id] = calls
+        return max(0, max_calls - len(calls))

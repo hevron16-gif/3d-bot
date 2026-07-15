@@ -26,6 +26,7 @@ from database import (
     save_diagnosis, get_history, get_all_history, get_error_stats,
     save_historical_code, get_historical_codes,
     get_user_tier, get_user_features,
+    lookup_ai_cache, save_ai_cache, check_ai_rate_limit, get_ai_rate_limit_remaining,
 )
 from elm327 import SimulatedELM327
 from simulator import SimulatorState, RUSSIAN_CARS
@@ -828,19 +829,43 @@ async def diagnose(http_request: Request, user_id: str = Query(default="anonymou
                                  car_model, vin, user_id,
                                  note="⚠️ AI-ключ не настроен. Использована офлайн-база.")
 
-    # Формируем промпт
+    # ── Кеш AI-ответов (пропускаем DeepSeek при повторе) ──
+    cached = lookup_ai_cache(error_code, car_brand, car_model or "")
+    if cached:
+        diag_id = save_diagnosis(
+            user_id=user_id,
+            error_code=error_code,
+            car_brand=car_brand,
+            car_model=car_model or "",
+            vin=vin or "",
+            diagnosis=cached["diagnosis"],
+            source="ai-cache",
+        )
+        import json as _json
+        return {
+            "error_code": error_code,
+            "diagnosis": cached["diagnosis"],
+            "causes": _json.loads(cached.get("causes", "[]")),
+            "solutions": _json.loads(cached.get("solutions", "[]")),
+            "severity": cached.get("severity", "medium"),
+            "source": "ai-cache",
+            "diagnosis_id": diag_id,
+            "cached": True,
+        }
+
+    # ── Rate limit: 20 AI-запросов в час на пользователя ──
+    if not check_ai_rate_limit(user_id):
+        return _offline_diagnose(error_code, car_brand,
+                                  car_model, vin, user_id,
+                                  note="⚠️ Превышен лимит AI-запросов (20/час). Попробуйте позже.")
+
+    # ── Оптимизированный промпт (короче = меньше токенов) ──
+    car_info = f"{car_brand} {car_model}".strip() if car_model else car_brand
     prompt = (
-        f"Ты — эксперт по диагностике российских автомобилей.\n\n"
-        f"Код ошибки: {error_code}\n"
-        f"Марка: {car_brand}\n"
-        f"Модель: {car_model or 'не указана'}\n"
-        f"VIN: {vin or 'не указан'}\n"
-        f"Дополнительный контекст: {context or 'нет'}\n\n"
-        f"Дай точный диагноз и пошаговые рекомендации по ремонту. "
-        f"Используй только проверенные данные. Не выдумывай. "
-        f"Учитывай особенности российских авто, ГБО и спецтехники.\n\n"
-        f"Ответ оформи в формате JSON:\n"
-        f'{{"diagnosis": "...", "causes": ["..."], "solutions": ["..."], "severity": "..."}}'
+        f"Ошибка {error_code} на {car_info}."
+        + (f" VIN:{vin}." if vin else "")
+        + (f" Контекст:{context}." if context else "")
+        + " Дай диагноз и решения. JSON: {\"diagnosis\":\"...\",\"causes\":[...],\"solutions\":[...],\"severity\":\"...\"}"
     )
 
     try:
@@ -851,10 +876,11 @@ async def diagnose(http_request: Request, user_id: str = Query(default="anonymou
                 json={
                     "model": "deepseek-chat",
                     "messages": [
-                        {"role": "system", "content": "Ты эксперт по диагностике российских автомобилей (Lada, ГАЗ, УАЗ, КамАЗ, МТЗ). Отвечай строго в формате JSON."},
+                        {"role": "system", "content": "Ты механик по российским авто (Lada, ГАЗ, УАЗ). Отвечай кратко, JSON."},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.1,
+                    "max_tokens": 500,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -869,6 +895,13 @@ async def diagnose(http_request: Request, user_id: str = Query(default="anonymou
             parsed = {"diagnosis": ai_result, "causes": [], "solutions": []}
 
         diagnosis_text = parsed.get("diagnosis", ai_result)
+        causes = parsed.get("causes", [])
+        solutions = parsed.get("solutions", [])
+        severity = parsed.get("severity", "medium")
+
+        # Сохраняем в AI-кеш для будущих запросов
+        save_ai_cache(error_code, car_brand, car_model or "",
+                      diagnosis_text, causes, solutions, severity)
 
         # Сохраняем в историю
         diag_id = save_diagnosis(
@@ -887,7 +920,7 @@ async def diagnose(http_request: Request, user_id: str = Query(default="anonymou
                 error_code=error_code,
                 car_brand=car_brand,
                 diagnosis=diagnosis_text,
-                solution="; ".join(parsed.get("solutions", [])),
+                solution="; ".join(solutions),
                 user_id=user_id,
             )
 
@@ -898,7 +931,7 @@ async def diagnose(http_request: Request, user_id: str = Query(default="anonymou
                 error_code=error_code,
                 car_brand=car_brand,
                 diagnosis=diagnosis_text,
-                solution="; ".join(parsed.get("solutions", [])),
+                solution="; ".join(solutions),
             )
 
         # Исторический код
@@ -907,11 +940,12 @@ async def diagnose(http_request: Request, user_id: str = Query(default="anonymou
         return {
             "error_code": error_code,
             "diagnosis": diagnosis_text,
-            "causes": parsed.get("causes", []),
-            "solutions": parsed.get("solutions", []),
-            "severity": parsed.get("severity", "medium"),
+            "causes": causes,
+            "solutions": solutions,
+            "severity": severity,
             "source": "deepseek",
             "diagnosis_id": diag_id,
+            "rate_limit_remaining": get_ai_rate_limit_remaining(user_id),
         }
 
     except Exception as e:
@@ -1285,18 +1319,35 @@ async def diagnose_get(http_request: Request,
         return _offline_diagnose(error_code, car_brand, car_model, vin, user_id,
                                  note="⚠️ AI-ключ не настроен. Использована офлайн-база.")
 
+    # ── Кеш AI-ответов ──
+    cached = lookup_ai_cache(error_code, car_brand, car_model or "")
+    if cached:
+        diag_id = save_diagnosis(user_id=user_id, error_code=error_code, car_brand=car_brand,
+                                  car_model=car_model or "", vin=vin or "",
+                                  diagnosis=cached["diagnosis"], source="ai-cache")
+        import json as _json
+        return {
+            "error_code": error_code,
+            "diagnosis": cached["diagnosis"],
+            "causes": _json.loads(cached.get("causes", "[]")),
+            "solutions": _json.loads(cached.get("solutions", "[]")),
+            "severity": cached.get("severity", "medium"),
+            "source": "ai-cache",
+            "diagnosis_id": diag_id,
+            "cached": True,
+        }
+
+    # ── Rate limit ──
+    if not check_ai_rate_limit(user_id):
+        return _offline_diagnose(error_code, car_brand, car_model, vin, user_id,
+                                  note="⚠️ Превышен лимит AI-запросов (20/час).")
+
+    car_info = f"{car_brand} {car_model}".strip() if car_model else car_brand
     prompt = (
-        f"Ты — эксперт по диагностике российских автомобилей.\n\n"
-        f"Код ошибки: {error_code}\n"
-        f"Марка: {car_brand}\n"
-        f"Модель: {car_model or 'не указана'}\n"
-        f"VIN: {vin or 'не указан'}\n"
-        f"Дополнительный контекст: {context or 'нет'}\n\n"
-        f"Дай точный диагноз и пошаговые рекомендации по ремонту. "
-        f"Используй только проверенные данные. Не выдумывай. "
-        f"Учитывай особенности российских авто, ГБО и спецтехники.\n\n"
-        f"Ответ оформи в формате JSON:\n"
-        f'{{"diagnosis": "...", "causes": ["..."], "solutions": ["..."], "severity": "..."}}'
+        f"Ошибка {error_code} на {car_info}."
+        + (f" VIN:{vin}." if vin else "")
+        + (f" Контекст:{context}." if context else "")
+        + " Дай диагноз и решения. JSON: {"diagnosis":"...","causes":[...],"solutions":[...],"severity":"..."}"
     )
 
     try:
@@ -1307,10 +1358,11 @@ async def diagnose_get(http_request: Request,
                 json={
                     "model": "deepseek-chat",
                     "messages": [
-                        {"role": "system", "content": "Ты эксперт по диагностике российских автомобилей (Lada, ГАЗ, УАЗ, КамАЗ, МТЗ). Отвечай строго в формате JSON."},
+                        {"role": "system", "content": "Ты механик по российским авто (Lada, ГАЗ, УАЗ). Отвечай кратко, JSON."},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.1,
+                    "max_tokens": 500,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -1322,25 +1374,35 @@ async def diagnose_get(http_request: Request,
         except json.JSONDecodeError:
             parsed = {"diagnosis": ai_result, "causes": [], "solutions": []}
         diagnosis_text = parsed.get("diagnosis", ai_result)
+        causes = parsed.get("causes", [])
+        solutions = parsed.get("solutions", [])
+        severity = parsed.get("severity", "medium")
+
+        # Кешируем
+        save_ai_cache(error_code, car_brand, car_model or "",
+                      diagnosis_text, causes, solutions, severity)
+
         diag_id = save_diagnosis(user_id=user_id, error_code=error_code, car_brand=car_brand,
-                                 car_model=car_model, vin=vin, diagnosis=diagnosis_text, source="ai")
+                                  car_model=car_model, vin=vin, diagnosis=diagnosis_text, source="ai")
         if chroma.available:
             chroma.add_case(error_code=error_code, car_brand=car_brand,
-                            diagnosis=diagnosis_text, solution="; ".join(parsed.get("solutions", [])),
+                            diagnosis=diagnosis_text, solution="; ".join(solutions),
                             user_id=user_id)
         if is_paid(user_id):
             await cloud.push_diagnosis(user_id=user_id, error_code=error_code, car_brand=car_brand,
-                                       diagnosis=diagnosis_text, solution="; ".join(parsed.get("solutions", [])))
+                                        diagnosis=diagnosis_text, solution="; ".join(solutions))
         save_historical_code(error_code, "03", car_brand, car_model)
         return {
             "error_code": error_code,
             "diagnosis": diagnosis_text,
-            "causes": parsed.get("causes", []),
-            "solutions": parsed.get("solutions", []),
-            "severity": parsed.get("severity", "medium"),
+            "causes": causes,
+            "solutions": solutions,
+            "severity": severity,
             "source": "ai",
             "diagnosis_id": diag_id,
+            "rate_limit_remaining": get_ai_rate_limit_remaining(user_id),
         }
+
     except Exception as e:
         logger.warning(f"AI diagnose failed: {e}")
         return _offline_diagnose(error_code, car_brand, car_model, vin, user_id,
