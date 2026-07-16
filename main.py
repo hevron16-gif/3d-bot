@@ -47,8 +47,20 @@ class _SimRef:
 
 sim_ref = _SimRef()
 simulator = sim_ref.get()  # начальный экземпляр
-from schemas import get_schema, get_schema_or_upgrade, list_available_schemas, render_schema_svg, SchemaDownloader
+from schemas import (
+    _SCHEMAS,
+    get_schema as get_schema_data,
+    get_schema_or_upgrade,
+    list_available_schemas,
+    render_schema_svg,
+    downloader_get_schema,
+    get_download_stats,
+    refresh_all_schemas,
+)
 from sync import cloud
+import logging
+
+logger = logging.getLogger("autodiag")
 from pricing import router as pricing_router, require_feature, is_paid, get_paid_features
 from license import router as license_router
 from admin import router as admin_router
@@ -1085,6 +1097,12 @@ def memory_count(request: Request, user_id: str = Query(default="anonymous", des
 
 # ==================== Схемы узлов ====================
 
+@app.get("/schemas")
+def list_schemas():
+    """Список всех доступных схем узлов."""
+    return {"schemas": list_available_schemas(), "total": len(_SCHEMAS)}
+
+
 @app.get("/schemas/{code}")
 def get_schema_endpoint(
     request: Request,
@@ -1092,14 +1110,18 @@ def get_schema_endpoint(
     user_id: str = Query(default="anonymous"),
 ):
     """
-    Получить схему узла по коду ошибки.
-    Бесплатные пользователи видят заглушку с предложением апгрейда.
+    Получить схему узла по коду ошибки (тестовая версия — бесплатно).
     """
     general_limiter.is_allowed(request)
     log_request(request, user_id)
     code = sanitize_error_code(code)
-    paid = is_paid(user_id)
-    return get_schema_or_upgrade(code, paid)
+    # Всегда отдаём полную схему (тестовый режим)
+    result = get_schema_or_upgrade(code, is_paid=True)
+    if result.get("available"):
+        # Добавляем статистику скачанных изображений
+        stats = get_download_stats()
+        result["data"]["_downloaded_images"] = stats.get("codes", {}).get(code, 0)
+    return result
 
 
 @app.get("/schemas/{code}/image")
@@ -1109,55 +1131,96 @@ def get_schema_image(
     user_id: str = Query(default="anonymous"),
 ):
     """
-    Получить 2D-изображение схемы в SVG (Pro+).
-    Бесплатные — заглушка.
+    Получить 2D-изображение схемы в SVG (тестовая версия — бесплатно).
     """
     general_limiter.is_allowed(request)
     log_request(request, user_id)
     code = sanitize_error_code(code)
-    paid = is_paid(user_id)
-    schema_result = get_schema_or_upgrade(code, paid)
-    if not schema_result.get("available"):
-        return schema_result
+    result = get_schema_or_upgrade(code, is_paid=True)
+    if not result.get("available"):
+        return result
 
     from fastapi.responses import Response
-    svg = render_schema_svg(code, schema_result["data"])
+    svg = render_schema_svg(code, result["data"])
     return Response(content=svg, media_type="image/svg+xml; charset=utf-8")
-
-
-@app.get("/schemas")
-def list_schemas():
-    """Список всех доступных схем."""
-    return {"schemas": list_available_schemas()}
 
 
 @app.get("/schemas/{code}/download")
 async def download_schema(
     request: Request,
     code: str,
-    brand: str = Query(default="LADA", description="Марка авто (LADA, ГАЗ, УАЗ, и др.)"),
+    brand: str = Query(default="LADA", description="Марка авто для поиска"),
     user_id: str = Query(default="anonymous"),
 ):
     """
-    Автопоиск и скачивание схемы из Яндекс.Картинок (Enterprise).
-    Возвращает путь к сохранённому файлу.
+    Поиск и скачивание реальных схем из интернета (тестовая версия — бесплатно).
+    Источники: Bing Images → Google Images → Wikimedia.
     """
     download_limiter.is_allowed(request)
     log_request(request, user_id)
     code = sanitize_error_code(code)
     brand = sanitize_car_brand(brand)
-    paid = is_paid(user_id)
-    schema_result = get_schema_or_upgrade(code, paid)
-    if not schema_result.get("available"):
-        return schema_result
 
-    downloader = SchemaDownloader()
-    result = await downloader.get_schema(code, brand)
+    # Проверяем, есть ли схема в базе
+    schema_data = get_schema_data(code)
+    description = schema_data.get("description", "") if schema_data else ""
+
+    result = await downloader_get_schema(code, description)
+    if result:
+        return {
+            "code": code,
+            "images": result["images"],
+            "cached": result["cached"],
+            "count": result["count"],
+        }
     return {
         "code": code,
-        "brand": brand,
-        "result": result or "Схема будет добавлена в обновлении.",
+        "images": [],
+        "cached": False,
+        "count": 0,
+        "message": "Схемы не найдены. Попробуйте позже — библиотека пополняется ежемесячно.",
     }
+
+
+@app.post("/schemas/refresh")
+async def refresh_schemas(
+    request: Request,
+    user_id: str = Query(default="admin"),
+):
+    """
+    Запустить пополнение библиотеки — поиск схем для всех кодов.
+    Выполняется в фоне; возвращает статус сразу.
+    """
+    download_limiter.is_allowed(request)
+    log_request(request, user_id)
+
+    # Запускаем в фоновой задаче
+    import asyncio as _asyncio
+    _asyncio.create_task(_background_refresh())
+
+    return {
+        "status": "started",
+        "message": f"Запущено пополнение библиотеки для {len(_SCHEMAS)} кодов. "
+                   f"Это займёт несколько минут. Проверьте /schemas/stats позже.",
+        "total_codes": len(_SCHEMAS),
+        "codes": list(_SCHEMAS.keys()),
+    }
+
+
+@app.get("/schemas/stats")
+def get_schemas_stats():
+    """Статистика скачанных изображений схем."""
+    return get_download_stats()
+
+
+async def _background_refresh():
+    """Фоновая задача пополнения библиотеки."""
+    logger.info("Background schema refresh started")
+    try:
+        summary = await refresh_all_schemas(_SCHEMAS)
+        logger.info(f"Schema refresh done: {summary['success']}/{summary['total']} codes")
+    except Exception as exc:
+        logger.error(f"Background schema refresh failed: {exc}")
 
 
 # ==================== Облачная синхронизация ====================

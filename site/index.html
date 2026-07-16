@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+
+<html lang="ru">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+     <title>АвтоДиагностика AI v1.0.15 — диагностика авто через ELM327 + ИИ</title>
+
+     <meta name="description" content="АвтоДиагностика AI v1.0.15 — диагностика ВАЗ, УАЗ, ГАЗ, КАМАЗ и других российских автомобилей через ELM327 с AI-анализом DeepSeek. Чтение ошибок, живые данные, 2D-схемы. Self-contained Windows-сборка, .NET не требуется.">
+
+    <link rel="stylesheet" href="css/styles.css">
+
+    <link rel="icon" type="image/svg+xml" href="img/logo.svg">
+
+</head>
+
+<body>
+
+
+
+<nav class="nav" id="nav">
+
+    <div class="container nav-inner">
+
+        <a href="#" class="nav-logo">
+
+            <img src="img/logo.svg" alt="АвтоДиагностика AI" class="logo-icon" width="34" height="34">
+
+            <span>АвтоДиагностика AI</span>
+
+        </a>
+
+        <div class="nav-links" id="navLinks">
+
+            <a href="#features">Функции</a>
+
+            <a href="#how-it-works">Как работает</a>
+
+            <a href="#cars">Автомобили</a>
+
+            <a href="#screenshots">Скриншоты</a>
+
+            <a href="#faq">FAQ</a>
+
+            <a href="#download" class="btn btn-sm btn-primary">Скачать</a>
+
+        </div>
+
+        <button class="mobile-menu-toggle" id="mobileToggle" aria-label="Меню">
+
+            <span></span><span></span><span></span>
+
+        </button>
+
+    </div>
+
+</nav>
+
+
+
+<header class="hero" id="hero">
+
+    <div class="hero-bg"></div>
+
+    <div class="container hero-inner">
+
+        <div class="hero-content">
+
+            <div class="hero-badge"><span class="pulse-dot"></span> ИИ + ELM327</div>
+
+            <h1 class="hero-title">Диагностика авто<br>с <span class="gradient-text">искусственным интеллектом</span></h1>
+
+            <p class="hero-slogan">Умная диагностика российских автомобилей</p>
+
+            <p class="hero-subtitle">Подключи ELM327 к OBD2-разъёму — AI прочитает ошибки, найдёт причины и выдаст пошаговый план ремонта. Работает с ВАЗ, УАЗ, ГАЗ, КАМАЗ — онлайн и офлайн.</p>
+
+            <div class="hero-actions">
+
+                <a href="#download" class="btn btn-primary btn-lg">Скачать бесплатно</a>
+
+                <a href="#features" class="btn btn-outline btn-lg">Возможности</a>
+
+            </div>
+
+            <div class="hero-platforms">
+
+                <span class="platform-badge">Windows</span>
+
+                <span class="platform-badge">Android 8.0+</span>
+
+            </div>
+
+        </div>
+
+        <div class="hero-visual">
+
+            <div class="hero-phone">
+
+                <div class="phone-frame">
+
+                    <div class="phone-notch"></div>
+
+                    <div class="phone-screen">
+
+                        <div class="screen-header">АвтоДиагностика AI</div>
+
+                         <div class="screen-status">Подключено · Сервер v1.0.15</div>
+
+                        <div class="screen-code"><span class="code-label">Код ошибки</span><span class="code-value">P0301</span></div>
+
+                        <div class="screen-ai"><div class="ai-badge">DeepSeek V4 Pro</div><div class="ai-text">Пропуск зажигания в 1-м цилиндре. Вероятные причины: свеча, катушка, форсунка, компрессия...</div></div>
+
+                        <div class="screen-safety safe">Безопасно — можно проверить самостоятельно</div>
+
+                        <div class="screen-data"><div class="data-card"><span>RPM</span><strong>842</strong></div><div class="data-card"><span>ТОЖ</span><strong>92°C</strong></div><div class="data-card"><span>ДЗ</span><strong>13%</strong></div></div>
+
+                    </div>
+
+                </div>
+
+                <div class="hero-glow"></div>
+
+            </div>
+
+            <div class="hero-floating floating-1"><span>P0420 — эффективность катализатора</span></div>
+
+            <div class="hero-floating floating-2"><span>2D-схема: проблема найдена</span></div>
+
+        </div>
+
+    </div>
+
+</header>
+
+
+
+<section class="stats">
+
+    <div class="container">
+
+        <div class="stats-grid">
+
+            <div class="stat-item"><div class="stat-number">9</div><div class="stat-label">марок авто</div></div>
+
+            <div class="stat-item"><div class="stat-number">65+</div><div class="stat-label">PID датчиков</div></div>
+
+            <div class="stat-item"><div class="stat-number">5000+</div><div class="stat-label">OBD2-кодов</div></div>
+
+            <div class="stat-item"><div class="stat-number">&lt;2 сек</div><div class="stat-label">ответ AI</div></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="features" id="features">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Возможности</span>
+
+            <h2 class="section-title">Всё для диагностики</h2>
+
+            <p class="section-subtitle">От сканирования ошибок до пошагового плана ремонта</p>
+
+        </div>
+
+        <div class="features-grid">
+
+            <div class="feature-card reveal"><span class="feature-icon">🔌</span><h3>Чтение ошибок через ELM327</h3><p>Подключите адаптер к OBD2-разъёму — приложение считает все коды неисправностей (Mode 03, 07, 0A) и расшифрует их.</p></div>
+
+            <div class="feature-card reveal reveal-delay-1"><span class="feature-icon">🧠</span><h3>AI-диагностика DeepSeek</h3><p>Искусственный интеллект анализирует ошибки, выдаёт причины и пошаговые инструкции по ремонту с метками безопасности.</p></div>
+
+            <div class="feature-card reveal reveal-delay-2"><span class="feature-icon">📊</span><h3>Живые данные и графики</h3><p>18+ датчиков в реальном времени: обороты, температура, топливные коррекции, MAF, O₂. Графики, радар, дашборд.</p></div>
+
+            <div class="feature-card reveal reveal-delay-3"><span class="feature-icon">🗺️</span><h3>2D-схемы узлов</h3><p>Интерактивные схемы двигателя и систем с подсветкой проблемных компонентов. Схемы для ВАЗ, ГАЗ, УАЗ, КАМАЗ.</p></div>
+
+            <div class="feature-card reveal"><span class="feature-icon">📋</span><h3>История диагностик</h3><p>Все проверки сохраняются. Просмотр истории, повторный анализ старых ошибок, поиск по коду и дате.</p></div>
+
+            <div class="feature-card reveal reveal-delay-1"><span class="feature-icon">🧩</span><h3>Самообучение и память</h3><p>4-уровневая память: кэш → векторная БД → JSONL-архив → DeepSeek. База знаний растёт с каждой диагностикой.</p></div>
+
+            <div class="feature-card reveal reveal-delay-2"><span class="feature-icon">📡</span><h3>Офлайн-режим</h3><p>Диагностика без интернета: кэш ответов AI, локальная база OBD2-кодов, 2D-схемы всегда доступны.</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="how-it-works" id="how-it-works">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">За 5 шагов</span>
+
+            <h2 class="section-title">Как использовать</h2>
+
+            <p class="section-subtitle">От подключения до ремонта — проще, чем кажется</p>
+
+        </div>
+
+        <div class="steps">
+
+            <div class="step reveal"><div class="step-number">01</div><div class="step-icon">🔌</div><h3>Подключи ELM327</h3><p>Вставьте адаптер в OBD2-разъём (обычно под рулём) и подключитесь по Bluetooth из приложения.</p></div>
+
+            <div class="step-arrow">→</div>
+
+            <div class="step reveal reveal-delay-1"><div class="step-number">02</div><div class="step-icon">📱</div><h3>Включи Bluetooth</h3><p>Активируйте Bluetooth и выполните сопряжение с ELM327 (пароль: 1234 или 0000).</p></div>
+
+            <div class="step-arrow">→</div>
+
+            <div class="step reveal reveal-delay-2"><div class="step-number">03</div><div class="step-icon">🚗</div><h3>Выбери марку и модель</h3><p>Укажите марку и модель авто для точной диагностики и подбора 2D-схем.</p></div>
+
+            <div class="step-arrow">→</div>
+
+            <div class="step reveal reveal-delay-3"><div class="step-number">04</div><div class="step-icon">🔍</div><h3>Сканируй ошибки</h3><p>Нажмите «Сканировать» — приложение считает все коды и покажет критичность каждого.</p></div>
+
+            <div class="step-arrow">→</div>
+
+            <div class="step reveal reveal-delay-4"><div class="step-number">05</div><div class="step-icon">🧠</div><h3>AI-анализ</h3><p>DeepSeek проанализирует ошибки: причины, план ремонта, метки безопасности, ссылки.</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="cars" id="cars">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Автомобили</span>
+
+            <h2 class="section-title">Поддерживаемые марки</h2>
+
+            <p class="section-subtitle">Специализированные схемы и базы данных для российских авто</p>
+
+        </div>
+
+        <div class="cars-grid">
+
+            <div class="car-card reveal"><div class="car-icon">🚗</div><h3>ВАЗ (Lada)</h3><p>2101–2107, 2108–2115, Granta, Vesta, Niva Legend, Niva Travel, Largus, XRAY, Kalina, Priora, Samara, Ока, Vesta NG, Aura, Iskra</p><p class="car-count">45 моделей</p></div>
+
+            <div class="car-card reveal reveal-delay-1"><div class="car-icon">🚙</div><h3>УАЗ</h3><p>3151, 3160, 452 (Буханка), 469, Hunter, Патриот, Пикап, Профи, СГР (3909), Фермер, Карго, Зефир</p><p class="car-count">27 моделей</p></div>
+
+            <div class="car-card reveal reveal-delay-2"><div class="car-icon">🚛</div><h3>ГАЗ</h3><p>24 Волга, 3110, 31105, Соболь, Соболь NN, ГАЗель, ГАЗель NEXT, ГАЗель NN, ГАЗель Бизнес, Валдай, ГАЗон NEXT, Тигр, Садко, 66, 53, 3307, 3309</p><p class="car-count">39 моделей</p></div>
+
+            <div class="car-card reveal"><div class="car-icon">🚚</div><h3>КАМАЗ</h3><p>43118, 5320, 5410, 5511, 6520, 54901 (K5), 5490 (K4), 6580, 4310, 5350, 65115, 65117, Компас 5/6/9/12, Атлант, Арктика</p><p class="car-count">37 моделей</p></div>
+
+            <div class="car-card reveal reveal-delay-1"><div class="car-icon">🚛</div><h3>МАЗ</h3><p>103, 104, 105, 107, 203, 206, 215, 251, 4370, 4371, 4471, 5432, 5440, 5516, 6303, 6312, 6422, 6430, 6501</p><p class="car-count">19 моделей</p></div>
+
+            <div class="car-card reveal reveal-delay-2"><div class="car-icon">🚌</div><h3>ПАЗ</h3><p>3205, 3204, 3206, 4234, Вектор NEXT</p><p class="car-count">5 моделей</p></div>
+
+            <div class="car-card reveal"><div class="car-icon">🚌</div><h3>ЛАЗ</h3><p>695, 697, 699, 4202, A141, A183</p><p class="car-count">6 моделей</p></div>
+
+            <div class="car-card reveal reveal-delay-1"><div class="car-icon">🚌</div><h3>ЛиАЗ</h3><p>5256, 5292, 6212, 6213, 4292</p><p class="car-count">5 моделей</p></div>
+
+            <div class="car-card reveal reveal-delay-2"><div class="car-icon">🚐</div><h3>КАвЗ</h3><p>3976, 4238, 4235, 3270</p><p class="car-count">4 модели</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="requirements" id="requirements">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Требования</span>
+
+            <h2 class="section-title">Что нужно для работы</h2>
+
+        </div>
+
+        <div class="req-platform"><h3>Android</h3></div>
+
+        <div class="requirements-grid">
+
+            <div class="req-card"><div class="req-icon">📱</div><div class="req-content"><h4>Устройство</h4><p>Android 8.0 (API 26) или новее</p></div></div>
+
+            <div class="req-card"><div class="req-icon">📶</div><div class="req-content"><h4>Bluetooth</h4><p>Bluetooth 4.0 (BLE) или выше</p></div></div>
+
+            <div class="req-card"><div class="req-icon">🔌</div><div class="req-content"><h4>Адаптер</h4><p>ELM327 Bluetooth v1.5 / v2.1</p></div></div>
+
+        </div>
+
+        <div class="req-platform"><h3>Windows</h3></div>
+
+        <div class="requirements-grid">
+
+            <div class="req-card"><div class="req-icon">⚙️</div><div class="req-content"><h4>Среда</h4><p>Windows 10/11 x64 · .NET 10</p></div></div>
+
+            <div class="req-card"><div class="req-icon">📶</div><div class="req-content"><h4>Bluetooth</h4><p>Встроенный или USB-адаптер</p></div></div>
+
+            <div class="req-card"><div class="req-icon">🚗</div><div class="req-content"><h4>Автомобиль</h4><p>OBD2-совместимый (от ~2005 г.в.)</p></div></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="screenshots" id="screenshots">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Интерфейс</span>
+
+            <h2 class="section-title">Скриншоты приложения</h2>
+
+            <p class="section-subtitle">Современный тёмный интерфейс</p>
+
+        </div>
+
+        <div class="screenshots-scroll" id="screenshotsScroll">
+
+            <div class="screenshot-card"><div class="phone-frame"><div class="phone-notch"></div><div class="phone-screen"><div class="mock-status-bar"><span>12:34</span><span>📶 🔋</span></div><div class="mock-header">🚗 АвтоДиагностика AI</div><div class="mock-row"><div class="mock-select">Марка: ВАЗ ▼</div></div><div class="mock-row"><div class="mock-select">Модель: Granta ▼</div></div><div class="mock-btn mock-btn-blue">🔌 Подключить ELM327</div><div class="mock-status">Статус: не подключено</div><div class="mock-grid-2"><div class="mock-btn mock-btn-outline">📊 Данные</div><div class="mock-btn mock-btn-outline">📈 Графики</div><div class="mock-btn mock-btn-outline">💾 История</div><div class="mock-btn mock-btn-outline">🧠 AI</div></div></div></div><p class="screenshot-label">Главный экран</p></div>
+
+            <div class="screenshot-card"><div class="phone-frame"><div class="phone-notch"></div><div class="phone-screen"><div class="mock-status-bar"><span>12:35</span><span>📶 🔋</span></div><div class="mock-header">🧠 Результат AI</div><div class="mock-ai-box"><div class="mock-ai-title">ОБЩАЯ ОЦЕНКА</div><div class="mock-ai-text">Обнаружены проблемы с зажиганием и выхлопной системой.</div></div><div class="mock-ai-box"><div class="mock-ai-title">АНАЛИЗ</div><div class="mock-ai-text">P0301 — неисправна свеча или катушка цилиндра 1.</div></div><div class="mock-tags"><span class="mock-tag-safe">🟢 Безопасно</span><span class="mock-tag-warn">🟡 Осторожно</span></div></div></div><p class="screenshot-label">Диагностика AI</p></div>
+
+            <div class="screenshot-card"><div class="phone-frame"><div class="phone-notch"></div><div class="phone-screen"><div class="mock-status-bar"><span>12:36</span><span>📶 🔋</span></div><div class="mock-header">📊 Живые данные</div><div class="mock-live-grid"><div class="mock-live-card"><span class="mock-live-val" style="color:#10b981">842</span><span>RPM</span></div><div class="mock-live-card"><span class="mock-live-val" style="color:#10b981">87°C</span><span>ОЖ</span></div><div class="mock-live-card"><span class="mock-live-val">12.4%</span><span>Дроссель</span></div><div class="mock-live-card"><span class="mock-live-val">14.1V</span><span>АКБ</span></div><div class="mock-live-card"><span class="mock-live-val" style="color:#f59e0b">+3.1%</span><span>STFT</span></div><div class="mock-live-card"><span class="mock-live-val">0.45V</span><span>O₂ B1S1</span></div></div><div class="mock-live-footer">цикл: 487мс | 12 PID</div></div></div><p class="screenshot-label">Живые данные</p></div>
+
+            <div class="screenshot-card"><div class="phone-frame"><div class="phone-notch"></div><div class="phone-screen"><div class="mock-status-bar"><span>12:37</span><span>📶 🔋</span></div><div class="mock-header">🗺️ 2D-схема</div><div class="mock-diagram"><div class="mock-engine-block">Двигатель</div><div class="mock-engine-cyl" style="top:10px;left:24px">1</div><div class="mock-engine-cyl" style="top:10px;left:54px">2</div><div class="mock-engine-cyl" style="top:10px;left:84px">3</div><div class="mock-engine-cyl" style="top:10px;left:114px">4</div><div class="mock-cyl-highlight" style="top:8px;left:22px">⚠</div><div class="mock-diagram-label" style="top:55px;left:18px">Свеча 1</div></div><div class="mock-diagram-info">ВАЗ · Вид сверху · P0301</div></div></div><p class="screenshot-label">Схема узлов</p></div>
+
+            <div class="screenshot-card"><div class="phone-frame"><div class="phone-notch"></div><div class="phone-screen"><div class="mock-status-bar"><span>12:38</span><span>📶 🔋</span></div><div class="mock-header">📋 История</div><div class="mock-history-list"><div class="mock-history-item"><div class="mock-history-date">08.07.2026</div><div class="mock-history-car">ВАЗ Granta</div><div class="mock-history-codes"><span class="mock-code-red-inline">P0301</span><span class="mock-code-yellow-inline">P0420</span></div></div><div class="mock-history-item"><div class="mock-history-date">05.07.2026</div><div class="mock-history-car">УАЗ Patriot</div><div class="mock-history-codes"><span class="mock-code-red-inline">P0171</span></div></div><div class="mock-history-item"><div class="mock-history-date">01.07.2026</div><div class="mock-history-car">ГАЗ Газель</div><div class="mock-history-codes"><span class="mock-code-yellow-inline">P0135</span><span class="mock-code-green-inline">✔</span></div></div></div></div></div><p class="screenshot-label">История</p></div>
+
+            <div class="screenshot-card"><div class="phone-frame"><div class="phone-notch"></div><div class="phone-screen"><div class="mock-status-bar"><span>12:39</span><span>📶 🔋</span></div><div class="mock-header">📚 База знаний</div><div class="mock-kb-search"><div class="mock-kb-input">🔍 Поиск по коду ошибки...</div></div><div class="mock-kb-list"><div class="mock-kb-item"><div class="mock-kb-code">P0301</div><div class="mock-kb-title">Пропуск зажигания цил.1</div><div class="mock-kb-sources">12 источников</div></div><div class="mock-kb-item"><div class="mock-kb-code">P0420</div><div class="mock-kb-title">Эффективность катализатора</div><div class="mock-kb-sources">8 источников</div></div><div class="mock-kb-item"><div class="mock-kb-code">P0171</div><div class="mock-kb-title">Бедная смесь</div><div class="mock-kb-sources">15 источников</div></div></div><div class="mock-kb-footer">Автообновление: вчера</div></div></div><p class="screenshot-label">База знаний</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="safety" id="safety">
+
+    <div class="container">
+
+        <div class="safety-card reveal">
+
+            <div class="safety-icon">🛡️</div>
+
+            <div class="safety-content">
+
+                <h3>Безопасность превыше всего</h3>
+
+                <p>Каждый ремонтный совет от AI маркируется одной из трёх меток:</p>
+
+                <div class="safety-tags">
+
+                    <span class="tag tag-safe">🟢 Безопасно — можно сделать самому</span>
+
+                    <span class="tag tag-caution">🟡 Осторожно — требуется опыт</span>
+
+                    <span class="tag tag-danger">🔴 Только специалист — обращение в сервис</span>
+
+                </div>
+
+                <p class="safety-note">Серверная пост-проверка выявляет опасные процедуры и добавляет дисклеймер.</p>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="faq" id="faq">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">FAQ</span>
+
+            <h2 class="section-title">Частые вопросы</h2>
+
+        </div>
+
+        <div class="faq-grid">
+
+            <div class="faq-card reveal"><h4>Какие автомобили поддерживаются?</h4><p>Российские марки с OBD2: ВАЗ, ГАЗ, УАЗ, КАМАЗ, МАЗ, ПАЗ, ЛАЗ, ЛиАЗ, КАвЗ — от ~2005 г.в. <a href="#cars">Полный список →</a></p></div>
+
+            <div class="faq-card reveal reveal-delay-1"><h4>Работает ли с автобусами?</h4><p>Да — ПАЗ, ЛАЗ, ЛиАЗ, КАвЗ, КАМАЗ, МАЗ.</p></div>
+
+            <div class="faq-card reveal"><h4>Нужен ли интернет?</h4><p>AI-диагностика требует интернет. Но базовая диагностика, кэш и база знаний работают офлайн.</p></div>
+
+            <div class="faq-card reveal reveal-delay-1"><h4>Какие адаптеры?</h4><p>ELM327 Bluetooth, Wi-Fi, USB — версии 1.5, 2.1 — все работают.</p></div>
+
+            <div class="faq-card reveal"><h4>Это бесплатно?</h4><p>Да, приложение полностью бесплатное. Никаких подписок и скрытых платежей.</p></div>
+
+            <div class="faq-card reveal reveal-delay-1"><h4>Как подключить ELM327?</h4><p>Вставьте адаптер в OBD2, включите Bluetooth, найдите устройство (OBDII или ELM327), пароль 1234 или 0000. Откройте приложение и сканируйте.</p></div>
+
+            <div class="faq-card reveal"><h4>Почему долго отвечает?</h4><p>Сервер на бесплатном тарифе засыпает после 15 мин простоя. Первый запрос может занять до 30 сек.</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="privacy" id="privacy">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Конфиденциальность</span>
+
+            <h2 class="section-title">Политика конфиденциальности</h2>
+
+        </div>
+
+        <div class="privacy-content">
+
+            <div class="privacy-block"><h4>Какие данные собираются</h4><p>Коды ошибок (DTC), VIN-номер, марка и модель автомобиля, данные диагностических сессий. Личные данные (имя, email, телефон) не собираются.</p></div>
+
+            <div class="privacy-block"><h4>Цель обработки</h4><p>Данные используются исключительно для AI-диагностики и улучшения качества работы сервиса. Никакие данные не передаются третьим лицам.</p></div>
+
+            <div class="privacy-block"><h4>Использование AI</h4><p>Диагностические данные отправляются на сервер для обработки AI-моделью DeepSeek. Данные анонимизируются.</p></div>
+
+            <div class="privacy-block"><h4>Хранение данных</h4><p>Локально — в зашифрованной SQLite-базе на устройстве. На сервере — в защищённой базе данных. Срок хранения — 90 дней.</p></div>
+
+            <div class="privacy-block"><h4>Безопасность</h4><p>Все данные передаются по HTTPS. Приложение не собирает геолокацию, контакты и другие личные данные.</p></div>
+
+            <div class="privacy-block"><h4>Контакты</h4><p>По вопросам: создайте issue в <a href="https://github.com/hevron16-gif/3d-bot" style="color:var(--accent)">GitHub-репозитории</a>.</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="terms" id="terms">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Правила</span>
+
+            <h2 class="section-title">Условия использования</h2>
+
+        </div>
+
+        <div class="terms-content">
+
+            <div class="terms-block"><h4>Общие положения</h4><p>АвтоДиагностика AI — бесплатное приложение для диагностики автомобилей. Используя приложение, вы соглашаетесь с данными условиями.</p></div>
+
+            <div class="terms-block"><h4>Ограничение ответственности</h4><p>AI-диагностика носит рекомендательный характер. Перед ремонтом рекомендуется консультация квалифицированного специалиста. Разработчик не несёт ответственности за ущерб.</p></div>
+
+            <div class="terms-block"><h4>Использование</h4><p>Приложение предназначено для личного некоммерческого использования. Запрещается использование в коммерческих автосервисах без согласования.</p></div>
+
+            <div class="terms-block"><h4>Сторонние сервисы</h4><p>Приложение использует сервер на Render.com и AI-модель DeepSeek. Доступность этих сервисов не гарантируется.</p></div>
+
+            <div class="terms-block"><h4>Изменения</h4><p>Разработчик оставляет за собой право изменять условия использования. Актуальная версия всегда доступна на этой странице.</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="contacts" id="contacts">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Связь</span>
+
+            <h2 class="section-title">Контакты</h2>
+
+            <p class="section-subtitle">Есть вопросы или предложения? Свяжитесь с нами</p>
+
+        </div>
+
+        <div class="contacts-grid">
+
+            <div class="contact-card reveal"><div class="contact-icon">🐙</div><h4>GitHub</h4><p>github.com/hevron16-gif</p></div>
+
+            <div class="contact-card reveal reveal-delay-1"><div class="contact-icon">📦</div><h4>Релизы</h4><p>github.com/hevron16-gif/3d-bot</p></div>
+
+            <div class="contact-card reveal reveal-delay-2"><div class="contact-icon">🌐</div><h4>Сервер</h4><p>car-diagnostic-ai.onrender.com</p></div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<section class="download" id="download">
+
+    <div class="container">
+
+        <div class="section-header">
+
+            <span class="section-label">Скачать</span>
+
+            <h2 class="section-title">Скачать приложение</h2>
+
+            <p class="section-subtitle">Бесплатно, без регистрации, без подписок</p>
+
+        </div>
+
+        <div class="download-grid">
+
+            <div class="download-card reveal">
+
+                <div class="download-icon">🖥️</div>
+
+                <h3>Windows x64</h3>
+
+                 <p class="download-version">Версия 1.0.15 · 104.6 МБ</p>
+
+                 <p class="download-req">Self-contained — .NET не требуется, просто распакуйте и запустите</p>
+
+                 <a href="https://github.com/hevron16-gif/3d-bot/releases/download/v1.0.15/CarDiagnosticApp_Windows.zip" class="btn btn-primary btn-block">Скачать для Windows</a>
+
+            </div>
+
+            <div class="download-card featured reveal reveal-delay-1">
+
+                <div class="download-icon">📱</div>
+
+                <h3>Android</h3>
+
+                 <p class="download-version">Версия 1.0.15 · 52.5 МБ</p>
+
+                <p class="download-req">Android 8.0+ · ARM64 · Подписанный APK</p>
+
+                 <a href="https://github.com/hevron16-gif/3d-bot/releases/download/v1.0.15/CarDiagnosticApp.apk" class="btn btn-primary btn-block">Скачать для Android</a>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+
+<footer class="footer">
+
+    <div class="container">
+
+        <div class="footer-grid">
+
+            <div class="footer-brand">
+
+                <a href="#" class="footer-logo"><img src="img/logo.svg" alt="" width="28" height="28"><span>АвтоДиагностика AI</span></a>
+
+                <p>Профессиональная диагностика российских автомобилей с искусственным интеллектом. Бесплатно, без регистрации.</p>
+
+                <div class="footer-server"><span class="server-status online"></span>Сервер: <a href="https://car-diagnostic-ai.onrender.com" target="_blank" rel="noopener">car-diagnostic-ai.onrender.com</a></div>
+
+            </div>
+
+            <div class="footer-links">
+
+                <h4>Приложение</h4>
+
+                <a href="#features">Функции</a>
+
+                <a href="#how-it-works">Как использовать</a>
+
+                <a href="#cars">Автомобили</a>
+
+                <a href="#screenshots">Скриншоты</a>
+
+                <a href="#requirements">Требования</a>
+
+                <a href="#faq">FAQ</a>
+
+                <a href="#download">Скачать</a>
+
+            </div>
+
+            <div class="footer-links">
+
+                <h4>Информация</h4>
+
+                <a href="#privacy">Конфиденциальность</a>
+
+                <a href="#terms">Условия</a>
+
+                <a href="#contacts">Контакты</a>
+
+                <a href="https://github.com/hevron16-gif/3d-bot" target="_blank" rel="noopener">GitHub</a>
+
+                <a href="#safety">Безопасность</a>
+
+            </div>
+
+        </div>
+
+        <div class="footer-bottom">
+
+            <p>© 2026 АвтоДиагностика AI. Все права защищены.</p>
+
+            <p>Сделано для российских автомобилистов</p>
+
+        </div>
+
+    </div>
+
+</footer>
+
+
+
+<script src="js/main.js"></script>
+
+</body>
+
+</html>
+
