@@ -1410,7 +1410,7 @@ async def diagnose_get(http_request: Request,
         f"Ошибка {error_code} на {car_info}."
         + (f" VIN:{vin}." if vin else "")
         + (f" Контекст:{context}." if context else "")
-        + " Дай диагноз и решения. JSON: {"diagnosis":"...","causes":[...],"solutions":[...],"severity":"..."}"
+        + ' Дай диагноз и решения. JSON: {"diagnosis":"...","causes":[...],"solutions":[...],"severity":"..."}'
     )
 
     try:
