@@ -595,7 +595,7 @@ async def root():
     return {
         "status": "ok",
         "product": "AutoDiag AI",
-        "version": "1.0.10",
+        "version": "1.0.12",
         "message": "Сервер работает. Агент готов.",
         "endpoints": {
             "simulator": "/sim/live, /sim/errors",
@@ -1228,12 +1228,7 @@ async def _background_refresh():
 @app.get("/sync/status")
 async def sync_status(user_id: str = Query(default="anonymous")):
     """Статус облачной синхронизации."""
-    if not is_paid(user_id):
-        return {
-            "available": False,
-            "message": "Облачная синхронизация доступна в версии Pro (499 ₽/мес).",
-            "upgrade_url": "/pricing/plans",
-        }
+    pass  # paywall disabled for testing
     queue = db.get_sync_queue(limit=10)
     return {
         "available": True,
@@ -1323,7 +1318,7 @@ def simulator_state(request: Request, user_id: str = Query(default="anonymous", 
 @app.get("/health")
 def health():
     """Health-check для Render."""
-    return {"status": "healthy", "version": "1.0.11"}
+    return {"status": "healthy", "version": "1.0.12"}
 
 
 # ==================== Статус подписки (быстрый) ====================
