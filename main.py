@@ -1103,6 +1103,37 @@ def list_schemas():
     return {"schemas": list_available_schemas(), "total": len(_SCHEMAS)}
 
 
+@app.post("/schemas/refresh")
+async def refresh_schemas(
+    request: Request,
+    user_id: str = Query(default="admin"),
+):
+    """
+    Запустить пополнение библиотеки — поиск схем для всех кодов.
+    Выполняется в фоне; возвращает статус сразу.
+    """
+    download_limiter.is_allowed(request)
+    log_request(request, user_id)
+
+    # Запускаем в фоновой задаче
+    import asyncio as _asyncio
+    _asyncio.create_task(_background_refresh())
+
+    return {
+        "status": "started",
+        "message": f"Запущено пополнение библиотеки для {len(_SCHEMAS)} кодов. "
+                   f"Это займёт несколько минут. Проверьте /schemas/stats позже.",
+        "total_codes": len(_SCHEMAS),
+        "codes": list(_SCHEMAS.keys()),
+    }
+
+
+@app.get("/schemas/stats")
+def get_schemas_stats():
+    """Статистика скачанных изображений схем."""
+    return get_download_stats()
+
+
 @app.get("/schemas/{code}")
 def get_schema_endpoint(
     request: Request,
@@ -1180,37 +1211,6 @@ async def download_schema(
         "count": 0,
         "message": "Схемы не найдены. Попробуйте позже — библиотека пополняется ежемесячно.",
     }
-
-
-@app.post("/schemas/refresh")
-async def refresh_schemas(
-    request: Request,
-    user_id: str = Query(default="admin"),
-):
-    """
-    Запустить пополнение библиотеки — поиск схем для всех кодов.
-    Выполняется в фоне; возвращает статус сразу.
-    """
-    download_limiter.is_allowed(request)
-    log_request(request, user_id)
-
-    # Запускаем в фоновой задаче
-    import asyncio as _asyncio
-    _asyncio.create_task(_background_refresh())
-
-    return {
-        "status": "started",
-        "message": f"Запущено пополнение библиотеки для {len(_SCHEMAS)} кодов. "
-                   f"Это займёт несколько минут. Проверьте /schemas/stats позже.",
-        "total_codes": len(_SCHEMAS),
-        "codes": list(_SCHEMAS.keys()),
-    }
-
-
-@app.get("/schemas/stats")
-def get_schemas_stats():
-    """Статистика скачанных изображений схем."""
-    return get_download_stats()
 
 
 async def _background_refresh():
