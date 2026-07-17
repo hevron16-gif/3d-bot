@@ -195,20 +195,30 @@ async def search_and_download(
     Search multiple sources for schemas related to an error code,
     download images, and return saved file paths.
     """
-    # Build search query — prefer Russian for local relevance
+    # Build search query — легковые + грузовики + автобусы РФ
+    desc = (description or "")[:50]
     if description:
-        query_ru = f"схема {error_code} {description[:60]} двигатель"
+        query_ru = f"схема {error_code} {desc} двигатель"
     else:
         query_ru = f"схема OBD2 {error_code} двигатель автомобиль"
     query_en = f"OBD2 {error_code} engine diagram schematic"
+    # Российские марки / коммерческий транспорт
+    query_lada = f"схема {error_code} LADA ВАЗ расположение датчика"
+    query_truck = f"схема {error_code} КАМАЗ ГАЗель дизель common rail"
+    query_bus = f"схема {error_code} ПАЗ ЛиАЗ автобус датчик"
+    query_maz = f"ошибка {error_code} МАЗ ЯМЗ схема"
 
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        # Try all sources in parallel
+        # Try all sources in parallel (общие + РФ грузовики/автобусы)
         tasks = [
             _search_bing(client, query_ru, max_images * 2),
             _search_bing(client, query_en, max_images),
+            _search_bing(client, query_lada, max_images),
+            _search_bing(client, query_truck, max_images),
+            _search_bing(client, query_bus, max_images),
             _search_google(client, query_ru, max_images),
-            _search_google(client, query_en, max_images),
+            _search_google(client, query_truck, max_images),
+            _search_google(client, query_maz, max_images),
             _search_wikimedia(client, query_en, max_images),
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)

@@ -3,11 +3,13 @@ AutoDiag AI v1.0 — Фоновый агент (Weekly Agent)
 Автоматический поиск новых схем, ошибок и решений в интернете.
 Запускается раз в неделю (или по требованию через /agent/run).
 
-Источники:
-1. Российские автофорумы (Drive2, Cardiagn, Autodata)
-2. Базы OBD2-кодов (OBD-Codes.ru, DTC Search)
-3. Техническая документация (заводские TSB)
-4. Новые схемы узлов (поиск по изображениям)
+Источники (см. ru_auto_sources.py):
+1. Легковые РФ: LADA/ВАЗ, Drive2, Drom, ZR, …
+2. Грузовые: КАМАЗ, ГАЗ, МАЗ, Урал, …
+3. Автобусы: ПАЗ, ЛиАЗ, НефАЗ, …
+4. Базы OBD2-кодов (OBD-Codes.ru, CarDiagn, …)
+5. Схемы: DuckDuckGo + site: по порталам РФ
+6. (далее) спецтехника РФ — тот же реестр, category=special
 
 Что делает:
 - Ищет новые коды ошибок, отсутствующие в БД
@@ -55,51 +57,48 @@ if not logger.handlers:
 
 
 # ════════════════ Источники для поиска ════════════════
+# Полный реестр — ru_auto_sources.py (легковые / грузовики / автобусы / спецтехника)
 
-# Известные URL для парсинга кодов ошибок
-KNOWN_CODE_SOURCES = [
-    {
-        "name": "OBD-Codes.ru",
-        "url": "https://obd-codes.ru/powertrain/p{range_start:04d}",
-        "type": "list",
-        "range_start": 0,
-        "range_end": 100,  # P0000-P0100
-        "parser": "html_table",
-    },
-    {
-        "name": "CarDiagn.com",
-        "url": "https://cardiagn.com/obd2-p{range_start:04d}-{range_end:04d}/",
-        "type": "list",
-        "range_start": 0,
-        "range_end": 100,
-        "parser": "wordpress",
-    },
-]
-
-# Поисковые запросы для новых схем
-SCHEMA_SEARCH_QUERIES = [
-    "схема датчика {component} автомобиль",
-    "расположение {component} двигатель схема",
-    "{component} где находится схема",
-]
-
-# Поисковые запросы для решений
-REPAIR_SEARCH_QUERIES = [
-    "ошибка {code} причины и ремонт",
-    "код {code} как исправить",
-    "DTC {code} repair guide Russian car",
-]
-
-# Компоненты для поиска схем
-COMPONENTS = [
-    "датчик кислорода", "датчик коленвала", "датчик распредвала",
-    "датчик детонации", "датчик массового расхода воздуха",
-    "клапан EGR", "катализатор", "топливный насос",
-    "форсунка", "катушка зажигания", "дроссельная заслонка",
-    "датчик температуры", "датчик давления масла",
-    "адсорбер", "клапан продувки адсорбера",
-    "лямбда-зонд", "датчик скорости",
-]
+try:
+    from ru_auto_sources import (
+        KNOWN_CODE_SOURCES,
+        SCHEMA_SEARCH_QUERIES,
+        REPAIR_SEARCH_QUERIES,
+        COMPONENTS,
+        RUSSIAN_RELEVANCE_HINTS,
+        PRIORITY_DTC_SEED,
+        BRAND_SEARCH_HINTS,
+    )
+except ImportError:
+    # fallback если файл не задеплоен
+    KNOWN_CODE_SOURCES = [
+        {
+            "name": "OBD-Codes.ru",
+            "url": "https://obd-codes.ru/powertrain/p{range_start:04d}",
+            "type": "list",
+            "range_start": 0,
+            "range_end": 100,
+            "parser": "html_table",
+            "category": "general",
+        },
+    ]
+    SCHEMA_SEARCH_QUERIES = [
+        "схема датчика {component} автомобиль",
+        "расположение {component} двигатель схема",
+    ]
+    REPAIR_SEARCH_QUERIES = [
+        "ошибка {code} причины и ремонт",
+        "код {code} как исправить",
+    ]
+    COMPONENTS = [
+        "датчик кислорода", "датчик коленвала", "лямбда-зонд",
+        "форсунка", "ТНВД", "турбина", "клапан EGR",
+    ]
+    RUSSIAN_RELEVANCE_HINTS = [
+        "лада", "газ", "уаз", "ваз", "камаз", "маз", "паз", "лиаз",
+    ]
+    PRIORITY_DTC_SEED = ["P0134", "P0300", "P0087", "P0216", "P0420"]
+    BRAND_SEARCH_HINTS = ["LADA", "КАМАЗ", "ГАЗ", "ПАЗ"]
 
 # ════════════════ Состояние агента ════════════════
 
@@ -287,33 +286,107 @@ class WeeklyAgent:
         for source in KNOWN_CODE_SOURCES:
             sources_checked += 1
             try:
-                if source["type"] == "list":
+                stype = source.get("type", "page")
+                if stype == "list":
                     # Пагинированные списки кодов
-                    for page in range(source["range_start"], source["range_end"], 20):
-                        url = source["url"].format(range_start=page)
+                    for page in range(source.get("range_start", 0), source.get("range_end", 100), 20):
+                        url = source["url"].format(
+                            range_start=page,
+                            range_end=page + 20,
+                        )
                         html = await self.client.fetch(url)
                         if html:
                             codes = extract_codes_from_html(html)
+                            for c in codes:
+                                c["source"] = source.get("name", "web")
+                                c["category"] = source.get("category", "general")
                             all_codes.extend(codes)
-                            await asyncio.sleep(0.5)  # пауза между страницами
+                            await asyncio.sleep(0.5)
                         else:
-                            break  # дальше страниц нет
+                            break
+                elif stype == "page":
+                    html = await self.client.fetch(source["url"])
+                    if html:
+                        codes = extract_codes_from_html(html)
+                        for c in codes:
+                            c["source"] = source.get("name", "web")
+                            c["category"] = source.get("category", "general")
+                        all_codes.extend(codes)
+                elif stype == "ddg_site":
+                    # site:домен + seed DTC + бренды РФ (грузовики/автобусы/легковые)
+                    site = source.get("site", "")
+                    queries = source.get("queries") or ["ошибка {code}"]
+                    seed_codes = PRIORITY_DTC_SEED[:12]
+                    brands = BRAND_SEARCH_HINTS[:6]
+                    for code in seed_codes:
+                        for qt in queries[:2]:
+                            q = qt.format(code=code, brand=brands[0] if brands else "LADA")
+                            ddg_q = f"site:{site} {q}" if site else q
+                            from urllib.parse import quote_plus
+                            url = f"https://api.duckduckgo.com/?q={quote_plus(ddg_q)}&format=json"
+                            data = await self.client.fetch_json(url)
+                            if data:
+                                codes = extract_codes_from_json(data)
+                                # также вытащим DTC из RelatedTopics
+                                for topic in data.get("RelatedTopics") or []:
+                                    if isinstance(topic, dict) and topic.get("Text"):
+                                        for m in RE_OBD_CODE.finditer(topic["Text"]):
+                                            codes.append({
+                                                "code": m.group(0).upper(),
+                                                "description": topic["Text"][:200],
+                                                "recommendations": "",
+                                                "source": source.get("name", "ddg"),
+                                            })
+                                    elif isinstance(topic, dict) and topic.get("Topics"):
+                                        for t2 in topic["Topics"]:
+                                            if isinstance(t2, dict) and t2.get("Text"):
+                                                for m in RE_OBD_CODE.finditer(t2["Text"]):
+                                                    codes.append({
+                                                        "code": m.group(0).upper(),
+                                                        "description": t2["Text"][:200],
+                                                        "recommendations": "",
+                                                        "source": source.get("name", "ddg"),
+                                                    })
+                                abstract = data.get("AbstractText") or ""
+                                if abstract:
+                                    for m in RE_OBD_CODE.finditer(abstract):
+                                        codes.append({
+                                            "code": m.group(0).upper(),
+                                            "description": abstract[:200],
+                                            "recommendations": "",
+                                            "source": source.get("name", "ddg"),
+                                        })
+                                for c in codes:
+                                    c.setdefault("source", source.get("name", "ddg"))
+                                    c["category"] = source.get("category", "general")
+                                all_codes.extend(codes)
+                            await asyncio.sleep(0.8)
+                else:
+                    logger.debug(f"Unknown source type {stype} for {source.get('name')}")
             except Exception as e:
-                logger.warning(f"Source {source['name']} failed: {e}")
+                logger.warning(f"Source {source.get('name')} failed: {e}")
                 sources_failed += 1
 
-        # Фильтрация: только российские авто и ГБО
-        russian_hints = [
-            "лада", "газ", "уаз", "ваз", "калина", "приора", "гранта",
-            "нива", "патриот", "газель", "соболь", "волга", "зил",
-            "газобаллон", "гбо", "метан", "пропан",
-        ]
+        # Фильтрация / маркировка: легковые + грузовики + автобусы + ГБО + спецтехника
+        russian_hints = list(RUSSIAN_RELEVANCE_HINTS)
 
         filtered = []
         for entry in all_codes:
-            desc_lower = (entry.get("description", "") + entry.get("recommendations", "")).lower()
-            # Сохраняем все коды, но маркируем релевантные для РФ
-            entry["russian_relevant"] = any(h in desc_lower for h in russian_hints)
+            desc_lower = (
+                entry.get("description", "")
+                + " "
+                + entry.get("recommendations", "")
+                + " "
+                + entry.get("source", "")
+                + " "
+                + entry.get("category", "")
+            ).lower()
+            # category truck/bus/passenger считаем релевантными для РФ по умолчанию
+            cat = (entry.get("category") or "").lower()
+            entry["russian_relevant"] = (
+                cat in ("passenger", "truck", "bus", "special")
+                or any(h in desc_lower for h in russian_hints)
+            )
             filtered.append(entry)
 
         # Сохраняем в БД
@@ -358,13 +431,18 @@ class WeeklyAgent:
         missing_schemas = all_db_codes - existing_codes
         logger.info(f"  Codes without schemas: {len(missing_schemas)}")
 
-        # Для каждого компонента ищем схемы
+        # Для каждого компонента ищем схемы (чередуем легковые / грузовики / автобусы)
+        from urllib.parse import quote_plus
         new_schemas = {}
-        for component in COMPONENTS:
-            for query_template in SCHEMA_SEARCH_QUERIES[:1]:  # только первый запрос
+        # не перегружаем: до 12 компонентов за прогон
+        for component in COMPONENTS[:12]:
+            # 2 шаблона: общий + грузовой/автобусный если есть
+            templates = SCHEMA_SEARCH_QUERIES[:1]
+            if any(k in component.lower() for k in ("тнвд", "common", "dpf", "турбин", "ядм", "рамп")):
+                templates = [t for t in SCHEMA_SEARCH_QUERIES if "КАМАЗ" in t or "ЯМЗ" in t or "дизель" in t][:1] or templates
+            for query_template in templates:
                 query = query_template.format(component=component)
-                # Пытаемся найти через поисковый API
-                url = f"https://api.duckduckgo.com/?q={query}&format=json"
+                url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json"
                 data = await self.client.fetch_json(url)
                 if data:
                     abstract = data.get("AbstractText", "")
@@ -374,13 +452,14 @@ class WeeklyAgent:
                             "found": True,
                             "abstract": abstract[:500],
                         }
-                break  # один запрос на компонент
+                break
 
         return {
             "missing_schemas": len(missing_schemas),
-            "components_searched": len(COMPONENTS),
+            "components_searched": min(12, len(COMPONENTS)),
             "new_schemas_found": len(new_schemas),
             "component_hits": list(new_schemas.keys()),
+            "sources_ru": len(KNOWN_CODE_SOURCES),
         }
 
     # ─── Поиск решений ─────────────────────────────────────
@@ -408,33 +487,42 @@ class WeeklyAgent:
         codes_without_recs = [(r["code"], r["description"]) for r in rows]
         logger.info(f"  Codes without recommendations: {len(codes_without_recs)}")
 
+        from urllib.parse import quote_plus
         updated = 0
         updated_codes = []
+        # Для каждого кода — общий + грузовой/автобусный запрос
         for code, desc in codes_without_recs:
-            query = REPAIR_SEARCH_QUERIES[0].format(code=code)
-            url = f"https://api.duckduckgo.com/?q={query}&format=json"
-            data = await self.client.fetch_json(url)
-            if data:
+            repair_text = None
+            for qt in REPAIR_SEARCH_QUERIES[:4]:
+                query = qt.format(code=code)
+                url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json"
+                data = await self.client.fetch_json(url)
+                if not data:
+                    await asyncio.sleep(0.5)
+                    continue
                 abstract = data.get("AbstractText", "") or data.get("Answer", "")
-                repair_text = None
                 if abstract and len(abstract) > 20:
                     repair_text = abstract[:500]
-                elif data.get("RelatedTopics"):
+                    break
+                if data.get("RelatedTopics"):
                     for topic in data["RelatedTopics"]:
                         if isinstance(topic, dict) and topic.get("Text"):
                             repair_text = topic["Text"][:500]
                             break
-                if repair_text:
-                    self._update_recommendations(code, repair_text)
-                    updated += 1
-                    updated_codes.append({"code": code, "recommendations": repair_text})
-
-            await asyncio.sleep(1.0)  # вежливая пауза
+                    if repair_text:
+                        break
+                await asyncio.sleep(0.7)
+            if repair_text:
+                self._update_recommendations(code, repair_text)
+                updated += 1
+                updated_codes.append({"code": code, "recommendations": repair_text})
+            await asyncio.sleep(0.5)
 
         return {
             "total_checked": len(codes_without_recs),
             "updated": updated,
             "_updated_codes": updated_codes,
+            "repair_query_templates": len(REPAIR_SEARCH_QUERIES),
         }
 
     # ─── Основной цикл ─────────────────────────────────────
