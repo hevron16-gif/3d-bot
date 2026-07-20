@@ -1,8 +1,5 @@
-#!/bin/bash
-# AutoDiag AI v1.0 — Запуск сервера
+#!/usr/bin/env bash
+# 3D Bot — start on Render
 set -e
-
-echo "=== AutoDiag AI v1.0.9 ==="
-echo "Starting server on 0.0.0.0:${PORT:-8000}"
-
-exec python main.py
+echo "=== 3D Bot starting on 0.0.0.0:${PORT:-10000} ==="
+exec gunicorn -w 1 -b "0.0.0.0:${PORT:-10000}" --timeout 120 app:flask_app

@@ -1,23 +1,4 @@
-# AutoDiag AI v1.0 — Зависимости
-
-# Core
-fastapi>=0.110.0
-uvicorn[standard]>=0.29.0
-httpx>=0.27.0
-pydantic>=2.0
-
-# Database
-# sqlite3 — встроен в Python
-
-# Vector memory (самообучение) — опционально, не блокирует сборку
-chromadb>=0.5.0; python_version < '3.13'
-
-# ELM327 (раскомментировать при наличии адаптера)
-# pyserial>=3.5
-# python-OBD>=0.7.1
-
-# Cloud sync
-# httpx уже указан выше
-
-# Development
-pytest>=8.0
+# 3D Telegram Bot (Hunyuan / Meshy / AI3D)
+flask>=3.0.0
+requests>=2.31.0
+gunicorn>=22.0.0

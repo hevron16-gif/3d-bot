@@ -1,23 +1,26 @@
-# AutoDiag AI v1.0 — Render Blueprint
-# https://render.com
+# 3D Telegram Bot — Render Blueprint
+# Repo: hevron16-gif/3d-bot
+# Entry: app.py (Flask + Telegram long-polling)
 
 services:
   - type: web
-    name: car-diagnostic-ai
-    env: python
-    runtime: python313
+    name: 3d-bot
+    runtime: python
     region: frankfurt
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
-    envVars:
-      - key: DEEPSEEK_API_KEY
-        sync: false
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: LICENSE_SECRET
-        sync: false
-      - key: PYTHON_VERSION
-        value: "3.13"
+    buildCommand: pip install -r requirements.txt
+    # 1 worker: иначе long-polling запустится в нескольких процессах
+    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 120 app:flask_app
     healthCheckPath: /health
     autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TENCENT_SECRET_ID
+        sync: false
+      - key: TENCENT_SECRET_KEY
+        sync: false
+      - key: MESHY_API_KEY
+        sync: false
