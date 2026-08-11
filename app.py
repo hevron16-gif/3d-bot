@@ -485,7 +485,7 @@ def main_keyboard(user_id):
         [{"text": f"📦 Пакет 5 шт. ({PRICE_PACK_5}⭐)", "callback_data": "buy_pack"}],
         [{"text": f"💎 Lite ({PRICE_SUB_LITE}⭐/мес)", "callback_data": "sub_lite"}],
         [{"text": f"💎 Pro ({PRICE_SUB_PRO}⭐/мес)", "callback_data": "sub_pro"}],
-        [{"text": "🧩 Part API", "callback_data": "part_menu"}],
+        
         [{"text": "💰 Баланс", "callback_data": "my_balance"}],
         [{"text": "❓ Помощь", "callback_data": "help_info"}],
     ]}
